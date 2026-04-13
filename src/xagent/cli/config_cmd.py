@@ -1,7 +1,9 @@
 import typer
 
 from xagent.cli.render import print_error, print_info
+from xagent.config.env import ensure_env_file
 from xagent.config.loader import config_exists, load_config, save_config
+from xagent.config.template import ensure_config_example_file
 from xagent.config.schema import AppConfig, default_config
 
 config_app = typer.Typer(help="Manage XAgent configuration.")
@@ -9,13 +11,19 @@ config_app = typer.Typer(help="Manage XAgent configuration.")
 
 @config_app.command("init")
 def init_config(force: bool = typer.Option(False, help="Overwrite an existing config file.")) -> None:
+    config_path = None
+    env_path = ensure_env_file(force=force)
+    example_path = ensure_config_example_file(force=force)
+
     if config_exists() and not force:
         print_info("Config already exists. Re-run with --force to overwrite it.")
-        return
+    else:
+        config_path = save_config(default_config())
+        print_info(f"Wrote XAgent config to {config_path}")
 
-    config_path = save_config(default_config())
-    print_info(f"Wrote XAgent config to {config_path}")
-    print_info("Set ARK_API_KEY and update the endpoint id in the config before running `xagent run`.")
+    print_info(f"Ensured project env file at {env_path}")
+    print_info(f"Ensured config example file at {example_path}")
+    print_info("Set ARK_API_KEY in .env and update the endpoint id in the config before running `xagent run`.")
 
 
 @config_app.command("show")

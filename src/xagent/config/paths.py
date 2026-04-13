@@ -17,7 +17,27 @@ def get_config_dir(start: Optional[Path] = None) -> Path:
 
 
 def get_config_file(start: Optional[Path] = None) -> Path:
-    return get_config_dir(start) / "config.toml"
+    return get_config_dir(start) / "config.yaml"
+
+
+def get_env_file(start: Optional[Path] = None) -> Path:
+    return find_project_root(start) / ".env"
+
+
+def get_config_example_file(start: Optional[Path] = None) -> Path:
+    return find_project_root(start) / "config.example.yaml"
+
+
+def get_chat_history_file(start: Optional[Path] = None) -> Path:
+    return get_config_dir(start) / "chat-history.txt"
+
+
+def get_approvals_file(start: Optional[Path] = None) -> Path:
+    return get_config_dir(start) / "approvals.json"
+
+
+def get_session_file(start: Optional[Path] = None) -> Path:
+    return get_config_dir(start) / "session.json"
 
 
 def ensure_config_dir(start: Optional[Path] = None) -> Path:

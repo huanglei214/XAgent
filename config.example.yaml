@@ -1,0 +1,8 @@
+# Example XAgent project configuration
+# Copy relevant values into .xagent/config.yaml if you want a fresh local config.
+default_model: "ep-your-ark-endpoint-id"
+models:
+  - name: "ep-your-ark-endpoint-id"
+    provider: "ark"
+    base_url: "https://ark.cn-beijing.volces.com/api/v3"
+    api_key_env: "ARK_API_KEY"

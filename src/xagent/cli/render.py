@@ -1,4 +1,5 @@
 from rich.console import Console
+from rich.panel import Panel
 
 console = Console()
 
@@ -21,3 +22,11 @@ def finish_stream() -> None:
 
 def print_tool_use(name: str, tool_input: str) -> None:
     console.print(f"[cyan]tool[/cyan] {name} {tool_input}")
+
+
+def print_warning(message: str) -> None:
+    console.print(f"[yellow]{message}[/yellow]")
+
+
+def print_panel(title: str, body: str) -> None:
+    console.print(Panel(body, title=title, expand=False))

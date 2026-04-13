@@ -2,7 +2,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from xagent.coding.tools import glob_search_tool, grep_search_tool, list_files_tool, read_file_tool
+from xagent.coding.tools import (
+    apply_patch_tool,
+    bash_tool,
+    glob_search_tool,
+    grep_search_tool,
+    list_files_tool,
+    read_file_tool,
+    write_file_tool,
+)
 from xagent.foundation.tools import ToolContext
 
 
@@ -35,3 +43,20 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_grep_search(self) -> None:
         result = await grep_search_tool.invoke({"path": ".", "pattern": "hello"}, self.ctx)
         self.assertIn("README.md:2: hello world", result.content)
+
+    async def test_write_file(self) -> None:
+        result = await write_file_tool.invoke({"path": "notes.txt", "content": "hello"}, self.ctx)
+        self.assertEqual(result.content, "Wrote notes.txt")
+        self.assertEqual((self.root / "notes.txt").read_text(encoding="utf-8"), "hello")
+
+    async def test_apply_patch(self) -> None:
+        result = await apply_patch_tool.invoke(
+            {"path": "src/main.py", "old_text": "value = 42", "new_text": "value = 43"},
+            self.ctx,
+        )
+        self.assertIn("Applied patch to src/main.py", result.content)
+        self.assertIn("value = 43", (self.root / "src" / "main.py").read_text(encoding="utf-8"))
+
+    async def test_bash(self) -> None:
+        result = await bash_tool.invoke({"command": "printf 'ok'"}, self.ctx)
+        self.assertEqual(result.content, "ok")
