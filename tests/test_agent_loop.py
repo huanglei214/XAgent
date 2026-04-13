@@ -2,7 +2,7 @@ import unittest
 
 from pydantic import BaseModel
 
-from xagent.agent.loop import Agent
+from xagent.agent.core import Agent, AgentMiddleware
 from xagent.foundation.messages import Message, TextPart, ToolUsePart, message_text
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 
@@ -58,3 +58,30 @@ class AgentLoopTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(message_text(message), "Tool said hello")
         self.assertEqual(provider.calls, 2)
+
+    async def test_agent_step_hooks_wrap_each_iteration(self) -> None:
+        class StepMiddleware(AgentMiddleware):
+            def __init__(self) -> None:
+                self.events = []
+
+            async def before_agent_step(self, *, agent, step: int) -> None:
+                self.events.append(("before", step))
+
+            async def after_agent_step(self, *, agent, step: int) -> None:
+                self.events.append(("after", step))
+
+        provider = _FakeProvider()
+        middleware = StepMiddleware()
+        agent = Agent(
+            provider=provider,
+            model="ep-test",
+            system_prompt="You are XAgent",
+            tools=[],
+            middlewares=[middleware],
+            cwd=".",
+        )
+
+        message = await agent.run("say hi")
+
+        self.assertEqual(message_text(message), "Tool said hello")
+        self.assertEqual(middleware.events, [("before", 1), ("after", 1), ("before", 2), ("after", 2)])

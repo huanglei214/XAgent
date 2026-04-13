@@ -43,13 +43,15 @@ class _FakeSessionStore:
     def __init__(self, restored=None):
         self.restored = restored or []
         self.saved_messages = None
+        self.saved_session_id = None
         self.cleared = False
 
-    def load_messages(self):
-        return list(self.restored)
+    def load_state(self):
+        return "session-1", list(self.restored)
 
-    def save_messages(self, messages):
+    def save_messages(self, messages, session_id=None):
         self.saved_messages = list(messages)
+        self.saved_session_id = session_id
 
     def clear(self):
         self.cleared = True
@@ -62,9 +64,9 @@ class CliChatTests(unittest.TestCase):
         fake_session = _FakePromptSession(["/help", "/status", "/clear", "hello", "/exit"])
         fake_store = _FakeSessionStore()
 
-        with patch("xagent.cli.chat.build_runtime_agent", return_value=fake_agent):
-            with patch("xagent.cli.chat.create_prompt_session", return_value=fake_session):
-                with patch("xagent.cli.chat.SessionStore", return_value=fake_store):
+        with patch("xagent.cli.commands.chat.build_runtime_agent", return_value=fake_agent):
+            with patch("xagent.cli.commands.chat.create_prompt_session", return_value=fake_session):
+                with patch("xagent.cli.commands.chat.SessionStore", return_value=fake_store):
                     result = runner.invoke(app, ["chat"])
 
         self.assertEqual(result.exit_code, 0)
@@ -77,6 +79,7 @@ class CliChatTests(unittest.TestCase):
         self.assertTrue(fake_agent.cleared)
         self.assertTrue(fake_store.cleared)
         self.assertIsNotNone(fake_store.saved_messages)
+        self.assertEqual(fake_store.saved_session_id, "session-1")
         self.assertEqual(fake_agent.calls, ["hello"])
 
     def test_chat_restores_previous_session(self) -> None:
@@ -86,9 +89,9 @@ class CliChatTests(unittest.TestCase):
         fake_session = _FakePromptSession(["/exit"])
         fake_store = _FakeSessionStore(restored=restored)
 
-        with patch("xagent.cli.chat.build_runtime_agent", return_value=fake_agent):
-            with patch("xagent.cli.chat.create_prompt_session", return_value=fake_session):
-                with patch("xagent.cli.chat.SessionStore", return_value=fake_store):
+        with patch("xagent.cli.commands.chat.build_runtime_agent", return_value=fake_agent):
+            with patch("xagent.cli.commands.chat.create_prompt_session", return_value=fake_session):
+                with patch("xagent.cli.commands.chat.SessionStore", return_value=fake_store):
                     result = runner.invoke(app, ["chat"])
 
         self.assertEqual(result.exit_code, 0)

@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from xagent.foundation.messages import Message, TextPart
-from xagent.memory.session_store import SessionStore
+from xagent.agent.session import SessionStore
 
 
 class SessionStoreTests(unittest.TestCase):
@@ -16,9 +16,10 @@ class SessionStoreTests(unittest.TestCase):
                 Message(role="assistant", content=[TextPart(text="hi")]),
             ]
 
-            store.save_messages(messages)
-            loaded = store.load_messages()
+            store.save_messages(messages, session_id="session-1")
+            session_id, loaded = store.load_state()
 
+        self.assertEqual(session_id, "session-1")
         self.assertEqual(len(loaded), 2)
         self.assertEqual(loaded[0].role, "user")
         self.assertEqual(loaded[1].content[0].text, "hi")

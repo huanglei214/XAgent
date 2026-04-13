@@ -3,18 +3,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from xagent.config.env import ensure_env_file, load_project_env
-from xagent.config.loader import dump_config_yaml, load_config, resolve_default_model, save_config
-from xagent.config.paths import get_config_example_file, get_config_file, get_env_file
-from xagent.config.schema import AppConfig, ModelConfig, default_config
-from xagent.config.template import ensure_config_example_file
+from xagent.cli.config.env import ensure_env_file, load_project_env
+from xagent.cli.config.loader import dump_config_yaml, load_config, resolve_default_model, save_config
+from xagent.cli.config.schema import AppConfig, ModelConfig, default_config
+from xagent.cli.config.template import ensure_config_example_file
+from xagent.foundation.runtime.paths import get_config_example_file, get_config_file, get_env_file
 
 
 class ConfigLoaderTests(unittest.TestCase):
     def test_save_and_load_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch("xagent.config.paths.find_project_root", return_value=root):
+            with patch("xagent.foundation.runtime.paths.find_project_root", return_value=root):
                 config = default_config()
                 save_config(config)
                 loaded = load_config()
@@ -42,14 +42,14 @@ class ConfigLoaderTests(unittest.TestCase):
     def test_load_missing_config_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch("xagent.config.paths.find_project_root", return_value=root):
+            with patch("xagent.foundation.runtime.paths.find_project_root", return_value=root):
                 with self.assertRaises(FileNotFoundError):
                     load_config()
 
     def test_ensure_env_file_and_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch("xagent.config.paths.find_project_root", return_value=root):
+            with patch("xagent.foundation.runtime.paths.find_project_root", return_value=root):
                 env_path = ensure_env_file()
                 env_path.write_text("ARK_API_KEY=test-key\n", encoding="utf-8")
                 loaded = load_project_env()
@@ -61,7 +61,7 @@ class ConfigLoaderTests(unittest.TestCase):
     def test_config_example_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch("xagent.config.paths.find_project_root", return_value=root):
+            with patch("xagent.foundation.runtime.paths.find_project_root", return_value=root):
                 example_path = ensure_config_example_file()
                 content = example_path.read_text(encoding="utf-8")
 

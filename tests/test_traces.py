@@ -1,0 +1,118 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from pydantic import BaseModel
+
+from xagent.agent.core import Agent
+from xagent.foundation.runtime.paths import get_trace_index_file
+from xagent.foundation.messages import Message, TextPart, ToolUsePart
+from xagent.foundation.tools import Tool, ToolContext, ToolResult
+from xagent.cli.runtime import run_agent_turn
+
+
+class _SuccessProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, request):
+        self.calls += 1
+        if self.calls == 1:
+            return Message(
+                role="assistant",
+                content=[ToolUsePart(id="call_1", name="echo_tool", input={"value": "hello"})],
+            )
+        return Message(role="assistant", content=[TextPart(text="done")])
+
+    async def stream_text(self, request):  # pragma: no cover
+        yield ""
+
+
+class _FailureProvider:
+    async def complete(self, request):
+        raise RuntimeError("provider exploded")
+
+    async def stream_text(self, request):  # pragma: no cover
+        yield ""
+
+
+class _EchoInput(BaseModel):
+    value: str
+
+
+class TraceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_success_trace_writes_events_and_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            async def _handler(args, ctx: ToolContext) -> ToolResult:
+                return ToolResult(content=args.value)
+
+            tool = Tool(
+                name="echo_tool",
+                description="Echo value",
+                input_model=_EchoInput,
+                handler=_handler,
+            )
+            agent = Agent(
+                provider=_SuccessProvider(),
+                model="ep-test",
+                system_prompt="You are XAgent",
+                tools=[tool],
+                cwd=str(root),
+            )
+            agent.provider_name = "ark"
+            agent.runtime_mode = "run"
+
+            message, duration = await run_agent_turn(agent, "read the repo")
+            self.assertEqual(message.content[0].text, "done")
+            self.assertGreaterEqual(duration, 0.0)
+
+            trace_path = agent.last_trace_recorder.path
+            events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+            event_types = [event["event_type"] for event in events]
+
+            self.assertIn("task_started", event_types)
+            self.assertIn("user_input", event_types)
+            self.assertIn("model_request", event_types)
+            self.assertIn("model_response", event_types)
+            self.assertIn("tool_call_started", event_types)
+            self.assertIn("tool_call_finished", event_types)
+            self.assertIn("state_snapshot", event_types)
+            self.assertIn("task_finished", event_types)
+
+            index = json.loads(get_trace_index_file(root).read_text(encoding="utf-8"))
+            self.assertEqual(index[-1]["status"], "success")
+            self.assertEqual(index[-1]["provider"], "ark")
+            self.assertEqual(index[-1]["task_kind"], "read")
+
+    async def test_failure_trace_keeps_replay_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent = Agent(
+                provider=_FailureProvider(),
+                model="ep-test",
+                system_prompt="You are XAgent",
+                tools=[],
+                cwd=str(root),
+            )
+            agent.provider_name = "ark"
+            agent.runtime_mode = "run"
+
+            with self.assertRaises(RuntimeError):
+                await run_agent_turn(agent, "debug this failure")
+
+            trace_path = agent.last_trace_recorder.path
+            events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+            event_types = [event["event_type"] for event in events]
+
+            self.assertIn("task_started", event_types)
+            self.assertIn("user_input", event_types)
+            self.assertIn("model_request", event_types)
+            self.assertIn("state_snapshot", event_types)
+            self.assertIn("task_failed", event_types)
+
+            index = json.loads(get_trace_index_file(root).read_text(encoding="utf-8"))
+            self.assertEqual(index[-1]["status"], "failed")
+            self.assertIn("provider exploded", index[-1]["error"])

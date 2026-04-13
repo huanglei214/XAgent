@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from xagent.memory.project_rules import load_project_rules
+from xagent.coding.context import load_project_rules
 
 
 class ProjectRulesTests(unittest.TestCase):

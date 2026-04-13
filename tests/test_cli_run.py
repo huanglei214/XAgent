@@ -27,7 +27,7 @@ class _FakeAgent:
 class CliRunTests(unittest.TestCase):
     def test_run_command_streams_output(self) -> None:
         runner = CliRunner()
-        with patch("xagent.cli.run.build_runtime_agent", return_value=_FakeAgent()):
+        with patch("xagent.cli.commands.run.build_runtime_agent", return_value=_FakeAgent()):
             result = runner.invoke(app, ["run", "Say hello"])
 
         self.assertEqual(result.exit_code, 0)

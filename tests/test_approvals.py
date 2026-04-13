@@ -5,11 +5,11 @@ from unittest.mock import patch
 
 from pydantic import BaseModel
 
-from xagent.agent.loop import Agent
-from xagent.coding.approvals import ApprovalStore, requires_approval
+from xagent.agent.core import Agent
+from xagent.coding.permissions import ApprovalStore, requires_approval
+from xagent.coding.middleware import ApprovalMiddleware
 from xagent.foundation.messages import Message, ToolUsePart
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
-from xagent.cli.runtime import make_approval_handler
 
 
 class _FakeProvider:
@@ -73,13 +73,12 @@ class ApprovalTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             store = ApprovalStore(root)
-            handler = make_approval_handler(store)
+            middleware = ApprovalMiddleware(store, prompt_fn=lambda prompt: "a")
             tool_use = ToolUsePart(id="call_1", name="bash", input={"command": "pwd"})
 
-            with patch("xagent.cli.runtime.typer.prompt", return_value="a"):
-                allowed = handler(tool_use)
+            result = await middleware.before_tool(agent=type("AgentStub", (), {"trace_recorder": None})(), tool_use=tool_use)
 
-        self.assertTrue(allowed)
+        self.assertIsNone(result)
         self.assertTrue(store.is_allowed("bash"))
 
     async def test_make_approval_handler_skips_prompt_for_persisted_tool(self) -> None:
@@ -87,11 +86,14 @@ class ApprovalTests(unittest.IsolatedAsyncioTestCase):
             root = Path(tmp)
             store = ApprovalStore(root)
             store.allow_tool("apply_patch")
-            handler = make_approval_handler(store)
+            middleware = ApprovalMiddleware(store, prompt_fn=lambda prompt: "n")
             tool_use = ToolUsePart(id="call_1", name="apply_patch", input={"path": "a.txt"})
 
-            with patch("xagent.cli.runtime.typer.prompt") as prompt:
-                allowed = handler(tool_use)
+            with patch.object(middleware, "prompt_fn") as prompt:
+                result = await middleware.before_tool(
+                    agent=type("AgentStub", (), {"trace_recorder": None})(),
+                    tool_use=tool_use,
+                )
 
-        self.assertTrue(allowed)
+        self.assertIsNone(result)
         prompt.assert_not_called()
