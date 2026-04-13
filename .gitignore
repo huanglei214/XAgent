@@ -40,6 +40,7 @@ pip-delete-this-directory.txt
 htmlcov/
 .tox/
 .nox/
+.pycache/
 .coverage
 .coverage.*
 .cache
@@ -205,3 +206,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+.omx/
+
+# XAgent local state
+.xagent/
