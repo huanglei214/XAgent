@@ -34,6 +34,41 @@ class OpenAIChatProvider:
         )
         return _from_openai_message(response.choices[0].message)
 
+    async def stream_complete(self, request: ModelRequest) -> AsyncIterator[Message]:
+        stream = await self._client.chat.completions.create(
+            model=request.model,
+            messages=_to_openai_messages(request),
+            tools=request.tools or None,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            stream=True,
+        )
+
+        text_parts: list[str] = []
+        tool_calls: dict[int, dict[str, Any]] = {}
+
+        async for chunk in stream:
+            choice = chunk.choices[0] if chunk.choices else None
+            delta = choice.delta if choice else None
+            if delta is None:
+                continue
+
+            if delta.content:
+                text_parts.append(delta.content)
+
+            for tool_call in delta.tool_calls or []:
+                index = getattr(tool_call, "index", 0) or 0
+                entry = tool_calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                if tool_call.id:
+                    entry["id"] = tool_call.id
+                if tool_call.function:
+                    if tool_call.function.name:
+                        entry["name"] = tool_call.function.name
+                    if tool_call.function.arguments:
+                        entry["arguments"] += tool_call.function.arguments
+
+            yield _snapshot_message("".join(text_parts), tool_calls)
+
     async def stream_text(self, request: ModelRequest) -> AsyncIterator[str]:
         stream = await self._client.chat.completions.create(
             model=request.model,
@@ -103,4 +138,28 @@ def _from_openai_message(message: Any) -> Message:
                 input=json.loads(arguments),
             )
         )
+    return Message(role="assistant", content=content)
+
+
+def _snapshot_message(text: str, tool_calls: dict[int, dict[str, Any]]) -> Message:
+    content = []
+    if text:
+        content.append(TextPart(text=text))
+
+    for index in sorted(tool_calls):
+        item = tool_calls[index]
+        parsed_input: dict[str, Any] = {}
+        if item["arguments"]:
+            try:
+                parsed_input = json.loads(item["arguments"])
+            except Exception:
+                parsed_input = {}
+        if item["id"] and item["name"]:
+            content.append(
+                ToolUsePart(
+                    id=item["id"],
+                    name=item["name"],
+                    input=parsed_input,
+                )
+            )
     return Message(role="assistant", content=content)

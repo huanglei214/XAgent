@@ -6,6 +6,7 @@ from xagent.cli.runtime.runtime import (
     render_tool_use,
     render_turn_status,
     run_agent_turn,
+    run_agent_turn_stream,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "render_tool_use",
     "render_turn_status",
     "run_agent_turn",
+    "run_agent_turn_stream",
 ]

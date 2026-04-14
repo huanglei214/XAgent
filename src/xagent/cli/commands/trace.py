@@ -8,7 +8,7 @@ from xagent.agent.traces import (
     list_failed_traces,
     load_trace_events,
 )
-from xagent.cli.ui.render import console, print_error, print_info, print_panel
+from xagent.cli.tui.render import console, print_error, print_info, print_panel
 
 trace_app = typer.Typer(help="Inspect local XAgent traces.")
 

@@ -43,6 +43,8 @@ class Agent:
         self,
         user_text: str,
         on_tool_use: Optional[Callable[[ToolUsePart], None]] = None,
+        on_tool_result: Optional[Callable[[ToolUsePart, ToolResultPart], None]] = None,
+        on_assistant_delta: Optional[Callable[[Message], None]] = None,
     ) -> Message:
         self.messages.append(Message(role="user", content=[TextPart(text=user_text)]))
         await self._before_agent_run(user_text)
@@ -56,7 +58,16 @@ class Agent:
             )
             request = await self._before_model(request)
             try:
-                assistant_message = await self.provider.complete(request)
+                if on_assistant_delta and hasattr(self.provider, "stream_complete"):
+                    latest: Optional[Message] = None
+                    async for snapshot in self.provider.stream_complete(request):
+                        latest = snapshot
+                        on_assistant_delta(snapshot)
+                    if latest is None:
+                        raise RuntimeError("Model stream ended without producing a message")
+                    assistant_message = latest
+                else:
+                    assistant_message = await self.provider.complete(request)
             except Exception:
                 self.last_error_stage = "model"
                 raise
@@ -106,6 +117,8 @@ class Agent:
 
                 await self._after_tool(tool_use, result)
                 self.messages.append(Message(role="tool", content=[result]))
+                if on_tool_result:
+                    on_tool_result(tool_use, result)
 
             await self._after_agent_step(step)
 

@@ -35,6 +35,22 @@ class AnthropicProvider:
                 text_parts.append(TextPart(text=block.text))
         return Message(role="assistant", content=text_parts)
 
+    async def stream_complete(self, request: ModelRequest) -> AsyncIterator[Message]:
+        stream = await self._client.messages.create(
+            model=request.model,
+            messages=_to_anthropic_messages(request),
+            max_tokens=request.max_tokens or 1024,
+            temperature=request.temperature,
+            stream=True,
+        )
+        text_parts: list[str] = []
+        async for event in stream:
+            if getattr(event, "type", None) == "content_block_delta":
+                delta = getattr(event.delta, "text", None)
+                if delta:
+                    text_parts.append(delta)
+                    yield Message(role="assistant", content=[TextPart(text="".join(text_parts))])
+
     async def stream_text(self, request: ModelRequest) -> AsyncIterator[str]:
         stream = await self._client.messages.create(
             model=request.model,

@@ -4,7 +4,7 @@ import time
 
 import typer
 
-from xagent.cli.ui.render import print_error, print_info, print_panel, print_tool_use
+from xagent.cli.tui.render import print_error, print_info, print_panel, print_tool_use
 from xagent.coding import create_coding_agent
 from xagent.coding.permissions import ApprovalStore
 from xagent.coding.middleware import ApprovalMiddleware
@@ -64,6 +64,10 @@ def render_final_message(message) -> None:
 
 
 async def run_agent_turn(agent, prompt: str):
+    return await run_agent_turn_stream(agent, prompt)
+
+
+async def run_agent_turn_stream(agent, prompt: str, on_assistant_delta=None, on_tool_use=None, on_tool_result=None):
     if not hasattr(agent, "middlewares"):
         agent.middlewares = []
     trace_added = False
@@ -72,7 +76,18 @@ async def run_agent_turn(agent, prompt: str):
         trace_added = True
     started = time.perf_counter()
     try:
-        message = await agent.run(prompt, on_tool_use=render_tool_use)
+        def _tool_use(tool_use):
+            if on_tool_use:
+                on_tool_use(tool_use)
+            else:
+                render_tool_use(tool_use)
+
+        message = await agent.run(
+            prompt,
+            on_tool_use=_tool_use,
+            on_tool_result=on_tool_result,
+            on_assistant_delta=on_assistant_delta,
+        )
         return message, time.perf_counter() - started
     except Exception as exc:
         duration = time.perf_counter() - started

@@ -7,9 +7,9 @@ from pydantic import BaseModel
 
 from xagent.agent.core import Agent
 from xagent.foundation.runtime.paths import get_trace_index_file
-from xagent.foundation.messages import Message, TextPart, ToolUsePart
+from xagent.foundation.messages import Message, TextPart, ToolUsePart, message_text
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
-from xagent.cli.runtime import run_agent_turn
+from xagent.cli.runtime import run_agent_turn, run_agent_turn_stream
 
 
 class _SuccessProvider:
@@ -27,6 +27,22 @@ class _SuccessProvider:
 
     async def stream_text(self, request):  # pragma: no cover
         yield ""
+
+    async def stream_complete(self, request):
+        self.calls += 1
+        if self.calls == 1:
+            yield Message(role="assistant", content=[TextPart(text="par")])
+            yield Message(role="assistant", content=[TextPart(text="partial")])
+            yield Message(
+                role="assistant",
+                content=[
+                    TextPart(text="partial"),
+                    ToolUsePart(id="call_1", name="echo_tool", input={"value": "hello"}),
+                ],
+            )
+            return
+
+        yield Message(role="assistant", content=[TextPart(text="done")])
 
 
 class _FailureProvider:
@@ -86,6 +102,55 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(index[-1]["status"], "success")
             self.assertEqual(index[-1]["provider"], "ark")
             self.assertEqual(index[-1]["task_kind"], "read")
+
+    async def test_streaming_turn_emits_assistant_deltas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            async def _handler(args, ctx: ToolContext) -> ToolResult:
+                return ToolResult(content=args.value)
+
+            tool = Tool(
+                name="echo_tool",
+                description="Echo value",
+                input_model=_EchoInput,
+                handler=_handler,
+            )
+            agent = Agent(
+                provider=_SuccessProvider(),
+                model="ep-test",
+                system_prompt="You are XAgent",
+                tools=[tool],
+                cwd=str(root),
+            )
+            agent.provider_name = "ark"
+            agent.runtime_mode = "run"
+
+            snapshots = []
+            tool_started = []
+            tool_finished = []
+
+            def _on_delta(message: Message) -> None:
+                snapshots.append(message_text(message))
+
+            def _on_tool_use(tool_use: ToolUsePart) -> None:
+                tool_started.append(tool_use.name)
+
+            def _on_tool_result(tool_use: ToolUsePart, result) -> None:
+                tool_finished.append((tool_use.name, result.is_error))
+
+            final_message, _ = await run_agent_turn_stream(
+                agent,
+                "read the repo",
+                on_assistant_delta=_on_delta,
+                on_tool_use=_on_tool_use,
+                on_tool_result=_on_tool_result,
+            )
+
+        self.assertEqual(final_message.content[0].text, "done")
+        self.assertEqual(snapshots[:2], ["par", "partial"])
+        self.assertEqual(tool_started, ["echo_tool"])
+        self.assertEqual(tool_finished, [("echo_tool", False)])
 
     async def test_failure_trace_keeps_replay_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -4,7 +4,7 @@ from xagent.cli.config.env import ensure_env_file
 from xagent.cli.config.loader import config_exists, load_config, save_config
 from xagent.cli.config.schema import AppConfig, default_config
 from xagent.cli.config.template import ensure_config_example_file
-from xagent.cli.ui.render import print_error, print_info
+from xagent.cli.tui.render import print_error, print_info
 
 config_app = typer.Typer(help="Manage XAgent configuration.")
 

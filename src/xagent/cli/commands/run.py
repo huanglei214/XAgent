@@ -3,7 +3,7 @@ from pathlib import Path
 
 import typer
 
-from xagent.cli.ui.render import print_error
+from xagent.cli.tui.render import print_error
 from xagent.cli.runtime import (
     build_runtime_agent,
     format_runtime_error,
