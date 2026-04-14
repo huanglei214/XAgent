@@ -4,9 +4,8 @@ from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
-from xagent.cli.config.schema import ModelConfig
 from xagent.foundation.messages import Message, TextPart, ToolUsePart
-from xagent.foundation.models import ModelRequest
+from xagent.foundation.models import ModelConfig, ModelRequest
 
 
 class OpenAIChatProvider:
@@ -114,7 +113,9 @@ def _to_openai_messages(request: ModelRequest) -> list[dict[str, str]]:
             converted.append(payload)
             continue
 
-        tool_part = next(part for part in message.content if part.type == "tool_result")
+        tool_part = next((part for part in message.content if part.type == "tool_result"), None)
+        if tool_part is None:
+            continue
         converted.append(
             {
                 "role": "tool",

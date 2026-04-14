@@ -28,6 +28,7 @@ def build_runtime_agent(cwd: str, ask_user_question: Optional[Callable] = None):
         provider=provider,
         model=model_config.name,
         cwd=cwd,
+        max_steps=config.max_model_calls,
         ask_user_question=ask_user_question,
         middlewares=[
             TraceMiddleware(),

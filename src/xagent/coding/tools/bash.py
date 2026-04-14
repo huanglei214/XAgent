@@ -56,7 +56,7 @@ async def _bash(args: BashInput, ctx: ToolContext) -> ToolResult:
 
 bash_tool = Tool(
     name="bash",
-    description="Run a shell command inside the workspace.",
+    description="Execute a bash command in a unix-like environment",
     input_model=BashInput,
     handler=_bash,
 )

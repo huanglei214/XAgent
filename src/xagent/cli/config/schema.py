@@ -1,20 +1,11 @@
-from typing import Literal, Optional
-
 from pydantic import BaseModel, Field, model_validator
 
-
-ProviderName = Literal["openai", "anthropic", "ark"]
-
-
-class ModelConfig(BaseModel):
-    name: str = Field(min_length=1)
-    provider: ProviderName = "openai"
-    base_url: Optional[str] = None
-    api_key_env: str = Field(min_length=1)
+from xagent.foundation.models import ModelConfig
 
 
 class AppConfig(BaseModel):
     default_model: str
+    max_model_calls: int = Field(default=100, ge=1, le=1000)
     models: list[ModelConfig]
 
     @model_validator(mode="after")
@@ -36,4 +27,4 @@ def default_config() -> AppConfig:
         base_url="https://ark.cn-beijing.volces.com/api/v3",
         api_key_env="ARK_API_KEY",
     )
-    return AppConfig(default_model=model.name, models=[model])
+    return AppConfig(default_model=model.name, max_model_calls=100, models=[model])

@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -25,7 +24,7 @@ async def _read_file(args: ReadFileInput, ctx: ToolContext) -> ToolResult:
 
     start = (args.start_line - 1) if args.start_line else 0
     end = args.end_line if args.end_line else len(lines)
-    if start < 0 or end < start:
+    if start < 0 or (args.start_line is not None and args.end_line is not None and args.end_line < args.start_line):
         return ToolResult.fail("Invalid line range requested.", code="INVALID_LINE_RANGE")
 
     selected = lines[start:end]

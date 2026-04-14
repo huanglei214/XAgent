@@ -26,6 +26,46 @@ class SessionStoreTests(unittest.TestCase):
         self.assertFalse(metadata.has_checkpoint)
         self.assertEqual(metadata.recent_message_count, 2)
 
+    def test_load_specific_session_when_multiple_sessions_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = SessionStore(root)
+
+            store.save_messages([Message(role="user", content=[TextPart(text="first")])], session_id="session-1")
+            store.save_messages([Message(role="user", content=[TextPart(text="second")])], session_id="session-2")
+
+            session_id, loaded, _ = store.load_state_with_metadata(session_id="session-1")
+
+        self.assertEqual(session_id, "session-1")
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].content[0].text, "first")
+
+    def test_list_sessions_returns_latest_first_with_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = SessionStore(root)
+
+            store.save_messages([Message(role="user", content=[TextPart(text="older session")])], session_id="session-1")
+            store.save_messages([Message(role="assistant", content=[TextPart(text="newer session")])], session_id="session-2")
+
+            sessions = store.list_sessions()
+
+        self.assertEqual([session.session_id for session in sessions[:2]], ["session-2", "session-1"])
+        self.assertTrue(sessions[0].is_latest)
+        self.assertFalse(sessions[1].is_latest)
+        self.assertEqual(sessions[0].preview, "newer session")
+        self.assertEqual(sessions[1].preview, "older session")
+        self.assertGreaterEqual(sessions[0].created_at, 0)
+        self.assertEqual(sessions[0].branch, "-")
+
+    def test_session_exists_for_saved_empty_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = SessionStore(root)
+
+            store.save_messages([], session_id="empty-session")
+            self.assertTrue(store.session_exists("empty-session"))
+
     def test_long_session_compacts_into_checkpoint_and_recent_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -81,9 +121,11 @@ class SessionStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             store = SessionStore(root)
-            store.save_messages([Message(role="user", content=[TextPart(text="hello")])])
+            store.save_messages([Message(role="user", content=[TextPart(text="hello")])], session_id="session-1")
+            self.assertTrue((store.sessions_dir / "session-1.json").exists())
             self.assertTrue(store.path.exists())
 
-            store.clear()
+            store.clear(session_id="session-1")
 
+        self.assertFalse((store.sessions_dir / "session-1.json").exists())
         self.assertFalse(store.path.exists())

@@ -11,7 +11,7 @@ from xagent.cli.config.loader import (
     save_config,
     set_default_model_name,
 )
-from xagent.cli.config.schema import AppConfig, ModelConfig, default_config
+from xagent.cli.config.schema import ModelConfig, default_config
 from xagent.cli.config.template import ensure_config_example_file
 from xagent.cli.tui.render import print_error, print_info
 
@@ -34,7 +34,7 @@ def init_config(force: bool = typer.Option(False, help="Overwrite an existing co
 
     print_info(f"Ensured project env file at {env_path}")
     print_info(f"Ensured config example file at {example_path}")
-    print_info("Set ARK_API_KEY in .env and update the endpoint id in the config before running `xagent run`.")
+    print_info("Set ARK_API_KEY in .env and update the endpoint id in the config before running `xagent`.")
 
 
 @config_app.command("show")

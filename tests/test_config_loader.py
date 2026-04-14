@@ -20,12 +20,14 @@ class ConfigLoaderTests(unittest.TestCase):
                 loaded = load_config()
 
         self.assertEqual(loaded.default_model, config.default_model)
+        self.assertEqual(loaded.max_model_calls, 100)
         self.assertEqual(loaded.models[0].api_key_env, "ARK_API_KEY")
         self.assertEqual(get_config_file(root), (root.resolve() / ".xagent" / "config.yaml"))
 
     def test_resolve_default_model(self) -> None:
         config = AppConfig(
             default_model="custom-model",
+            max_model_calls=42,
             models=[
                 ModelConfig(
                     name="custom-model",
@@ -68,8 +70,10 @@ class ConfigLoaderTests(unittest.TestCase):
         self.assertEqual(example_path, root / "config.example.yaml")
         self.assertEqual(get_config_example_file(root), root.resolve() / "config.example.yaml")
         self.assertIn('default_model: "ep-your-ark-endpoint-id"', content)
+        self.assertIn("max_model_calls: 100", content)
 
     def test_dump_config_yaml(self) -> None:
         content = dump_config_yaml(default_config())
+        self.assertIn("max_model_calls: 100", content)
         self.assertIn("models:", content)
         self.assertIn('provider: "ark"', content)

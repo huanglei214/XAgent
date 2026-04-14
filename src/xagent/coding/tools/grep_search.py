@@ -3,6 +3,7 @@ import re
 
 from pydantic import BaseModel, Field
 
+from xagent.coding.tools._ignore import iter_visible_entries
 from xagent.coding.workspace import resolve_tool_path
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 
@@ -26,7 +27,10 @@ async def _grep_search(args: GrepSearchInput, ctx: ToolContext) -> ToolResult:
     except re.error as exc:
         return ToolResult.fail(f"Invalid regex pattern: {exc}", code="INVALID_REGEX")
 
-    files = [target] if target.is_file() else [item for item in target.rglob("*") if item.is_file()]
+    if target.is_file():
+        files = [target]
+    else:
+        files = [item for item in iter_visible_entries(target, recursive=True) if item.is_file()]
     matches = []
 
     for file_path in files:

@@ -79,6 +79,7 @@ class ProjectRulesTests(unittest.TestCase):
         self.assertIn("<editing_rules>", agent.system_prompt)
         self.assertIn("<notes>", agent.system_prompt)
         self.assertTrue(any(type(middleware).__name__ == "ProjectRulesMiddleware" for middleware in agent.middlewares))
+        self.assertEqual(agent.max_steps, 100)
 
     def test_create_coding_agent_includes_ask_user_question_tool_when_callback_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -89,10 +90,12 @@ class ProjectRulesTests(unittest.TestCase):
                 provider=object(),
                 model="ep-test",
                 cwd=str(root),
+                max_steps=42,
                 ask_user_question=lambda params: {"answers": []},
             )
 
         self.assertIn("ask_user_question", [tool.name for tool in agent.tools])
+        self.assertEqual(agent.max_steps, 42)
 
     def test_project_rules_middleware_emits_trace_and_runtime_events(self) -> None:
         middleware = ProjectRulesMiddleware(

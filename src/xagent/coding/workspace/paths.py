@@ -1,9 +1,7 @@
 import inspect
 from pathlib import Path
 
-
-class WorkspaceEscapeError(ValueError):
-    pass
+from xagent.foundation.runtime.errors import WorkspaceEscapeError
 
 
 def resolve_workspace_path(cwd: str, target: str = ".") -> Path:

@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import shutil
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -9,15 +10,20 @@ from typing import Dict, List, Optional
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
+from prompt_toolkit.application import Application
 from prompt_toolkit import PromptSession
+from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
-from xagent.agent.session import SessionStore
+from xagent.agent.session import SessionStore, SessionSummary
 from xagent.agent.tool_result_runtime import summarize_tool_result_for_ui
 from xagent.agent.core import AgentAborted
 from xagent.cli.runtime.runtime import (
@@ -148,6 +154,35 @@ def build_command_palette_text(
     return "\n".join(lines)
 
 
+def build_todo_text(agent) -> str:
+    """构建展示在输入框上方的 Todo 文本。"""
+    todo_store = getattr(agent, "todo_store", None)
+    items = getattr(todo_store, "items", None) or []
+    if not items:
+        return ""
+
+    status_markers = {
+        "pending": "[ ]",
+        "in_progress": "[>]",
+        "completed": "[x]",
+        "cancelled": "[-]",
+    }
+    lines = ["Todos"]
+    for item in items:
+        marker = status_markers.get(getattr(item, "status", ""), "[ ]")
+        lines.append(f"  {marker} {item.content}")
+    return "\n".join(lines)
+
+
+def _todo_line_style(line: str) -> str:
+    """返回 Todo 行对应的渲染样式。"""
+    if "[>]" in line:
+        return "class:todo_active"
+    if "[x]" in line or "[-]" in line:
+        return "class:todo_done"
+    return "class:todo_item"
+
+
 def _render_message_blocks(message: Message) -> List[str]:
     """渲染单条消息为文本块列表。"""
     blocks: List[str] = []
@@ -190,6 +225,122 @@ def _format_token_count(count: int) -> str:
     if count >= 1000:
         return f"{count / 1000:.1f}k"
     return str(count)
+
+
+def build_resume_hint_text(session_id: str) -> str:
+    return f"To continue this session, run xagent resume {session_id}"
+
+
+def _format_session_age(saved_at: float) -> str:
+    if saved_at <= 0:
+        return "unknown time"
+    delta = datetime.now(timezone.utc).timestamp() - saved_at
+    if delta < 60:
+        return "just now"
+    if delta < 3600:
+        return f"{int(delta // 60)}m ago"
+    if delta < 86400:
+        return f"{int(delta // 3600)}h ago"
+    if delta < 86400 * 7:
+        return f"{int(delta // 86400)}d ago"
+    return datetime.fromtimestamp(saved_at, tz=timezone.utc).astimezone().strftime("%Y-%m-%d")
+
+
+def _format_session_option(index: int, summary: SessionSummary, current_session_id: str) -> str:
+    markers = []
+    if summary.is_latest:
+        markers.append("latest")
+    if summary.session_id == current_session_id:
+        markers.append("current")
+    marker_text = f" [{' | '.join(markers)}]" if markers else ""
+    short_id = summary.session_id[:8]
+    return (
+        f"{index}. {summary.preview} "
+        f"({summary.message_count} msgs, {_format_session_age(summary.saved_at)}, {short_id}){marker_text}"
+    )
+
+
+def _build_session_picker_values(
+    sessions: List[SessionSummary],
+    current_session_id: str,
+) -> List[tuple[str, str]]:
+    return [
+        (summary.session_id, _format_session_option(index, summary, current_session_id))
+        for index, summary in enumerate(sessions, start=1)
+    ]
+
+
+def _default_session_picker_selection(
+    sessions: List[SessionSummary],
+    current_session_id: str,
+) -> Optional[str]:
+    for summary in sessions:
+        if summary.session_id != current_session_id:
+            return summary.session_id
+    return sessions[0].session_id if sessions else None
+
+
+def _filter_session_summaries(
+    sessions: List[SessionSummary],
+    query: str,
+) -> List[SessionSummary]:
+    normalized = query.strip().lower()
+    if not normalized:
+        return list(sessions)
+
+    terms = [term for term in normalized.split() if term]
+    filtered: List[SessionSummary] = []
+    for summary in sessions:
+        haystack = " ".join(
+            [
+                summary.session_id.lower(),
+                summary.branch.lower(),
+                summary.preview.lower(),
+                _format_session_age(summary.created_at).lower(),
+                _format_session_age(summary.saved_at).lower(),
+            ]
+        )
+        if all(term in haystack for term in terms):
+            filtered.append(summary)
+    return filtered
+
+
+def _fit_session_picker_cell(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    if len(text) <= width:
+        return text.ljust(width)
+    if width <= 3:
+        return text[:width]
+    return (text[: width - 3] + "...").ljust(width)
+
+
+def _session_picker_column_widths(total_width: int) -> dict[str, int]:
+    usable = max(72, total_width)
+    created = 18
+    updated = 18
+    branch = min(14, max(10, usable // 8))
+    conversation = max(20, usable - 2 - created - updated - branch - 6)
+    return {
+        "marker": 2,
+        "created": created,
+        "updated": updated,
+        "branch": branch,
+        "conversation": conversation,
+    }
+
+
+def _build_session_picker_row_text(
+    summary: SessionSummary,
+    total_width: int,
+) -> tuple[str, str, str, str]:
+    widths = _session_picker_column_widths(total_width)
+    return (
+        _fit_session_picker_cell(_format_session_age(summary.created_at), widths["created"]),
+        _fit_session_picker_cell(_format_session_age(summary.saved_at), widths["updated"]),
+        _fit_session_picker_cell(summary.branch, widths["branch"]),
+        _fit_session_picker_cell(summary.preview or "(empty session)", widths["conversation"]),
+    )
 
 
 def _print_header(agent) -> None:
@@ -391,9 +542,8 @@ def _read_input() -> str:
     return text.strip()
 
 
-async def run_tui(cwd: str) -> None:
+async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional[str] = None) -> None:
     """TUI 主入口 — 透明背景 + 固定底部输入 panel（非全屏）。"""
-    token_count = 0
     ui_state = {
         "streaming": False,
         "streaming_hint": "",
@@ -403,6 +553,7 @@ async def run_tui(cwd: str) -> None:
         "streaming_text": "",
         "runtime_event_keys": set(),
     }
+    token_count = 0
 
     style = Style.from_dict(
         {
@@ -410,6 +561,10 @@ async def run_tui(cwd: str) -> None:
             "border": "fg:#6c6c6c",
             "prompt": "fg:#ffffff bold",
             "status": "fg:#a0a0a0",
+            "todo_header": "fg:#67d4ff bold",
+            "todo_item": "fg:#b8c0cc",
+            "todo_active": "fg:#ffffff bold",
+            "todo_done": "fg:#6f7782",
             "bottom-toolbar": "noreverse bg:default fg:default",
             "bottom-toolbar.text": "noreverse bg:default fg:default",
             "spinner": "fg:#00afff bold",
@@ -418,6 +573,21 @@ async def run_tui(cwd: str) -> None:
             "glow2": "fg:#005f87",
             "assistant_dot": "fg:#005f87 bold",
             "streaming_text": "fg:default",
+            "picker.title": "fg:#00d7d7 bold",
+            "picker.sort_label": "fg:#6f7782",
+            "picker.sort_value": "fg:#d700ff bold",
+            "picker.search_prompt": "fg:#6f7782",
+            "picker.search_input": "fg:#d8dee9",
+            "picker.search_empty": "fg:#6f7782",
+            "picker.header": "fg:#e5e9f0 bold",
+            "picker.text": "fg:#b8c0cc",
+            "picker.branch": "fg:#00d7d7",
+            "picker.selected": "fg:#ffffff bold",
+            "picker.selected_branch": "fg:#5fd7ff bold",
+            "picker.marker": "fg:#4c566a",
+            "picker.selected_marker": "fg:#ffffff bold",
+            "picker.footer": "fg:#6f7782",
+            "picker.empty": "fg:#6f7782 italic",
         }
     )
 
@@ -435,7 +605,9 @@ async def run_tui(cwd: str) -> None:
             agent.abort()
             _print_runtime_block("Cancelling run", ["User requested abort via Ctrl+C"])
             return
-        event.app.exit(exception=KeyboardInterrupt())
+        event.current_buffer.text = "/exit"
+        event.current_buffer.cursor_position = len(event.current_buffer.text)
+        event.current_buffer.validate_and_handle()
 
     session = None
     prompt_task: Optional[asyncio.Task[str]] = None
@@ -449,16 +621,25 @@ async def run_tui(cwd: str) -> None:
         width = _get_terminal_width()
         top = "─" * width
         parts = []
-        
+
+        todo_text = build_todo_text(agent)
+        if todo_text:
+            todo_lines = todo_text.splitlines()
+            parts.append(("class:todo_header", todo_lines[0]))
+            parts.append(("", "\n"))
+            for line in todo_lines[1:]:
+                parts.append((_todo_line_style(line), line))
+                parts.append(("", "\n"))
+
         if ui_state["thinking_active"]:
             frame = ui_state["thinking_frame"]
             label = ui_state["thinking_label"]
-            
+
             spinner_frames = ["·", "✢", "✳", "✶", "✻", "✽"]
             spinner = spinner_frames[(frame // 2) % len(spinner_frames)]
             text_len = len(label)
             glow_pos = (frame // 2) % (text_len + 5)
-            
+
             parts.append(("class:spinner", f"{spinner} "))
             for i, char in enumerate(label):
                 dist = abs(i - glow_pos)
@@ -469,18 +650,18 @@ async def run_tui(cwd: str) -> None:
                 else:
                     parts.append(("class:glow2", char))
             parts.append(("", "\n"))
-            
+
         if ui_state["streaming_text"]:
             parts.append(("class:assistant_dot", "● "))
             parts.append(("class:streaming_text", ui_state["streaming_text"]))
             parts.append(("", "\n"))
-            
+
         parts.append(("class:border", f"{top}\n"))
         if ui_state["streaming"]:
             parts.append(("class:prompt", "❯ Input anything to continue. Launch a new command or skill by typing `/`"))
         else:
             parts.append(("class:prompt", "❯ "))
-            
+
         return FormattedText(parts)
 
     async def _prompt_once() -> str:
@@ -540,6 +721,188 @@ async def run_tui(cwd: str) -> None:
                 prompt_task = asyncio.create_task(_prompt_once())
             _invalidate_prompt()
 
+    async def _prompt_session_picker(entries: List[SessionSummary]) -> Optional[str]:
+        nonlocal prompt_task
+        was_streaming = ui_state["streaming"]
+        await _cancel_live_prompt()
+
+        if ui_state["streaming_text"]:
+            _print_assistant_text(ui_state["streaming_text"])
+            ui_state["streaming_text"] = ""
+        ui_state["thinking_active"] = False
+        ui_state["streaming"] = False
+        _invalidate_prompt()
+
+        search_buffer = Buffer()
+        filtered_entries = list(entries)
+        default_session_id = _default_session_picker_selection(entries, agent.trace_session_id)
+        initial_index = next(
+            (index for index, item in enumerate(filtered_entries) if item.session_id == default_session_id),
+            0,
+        )
+        picker_state = {"selected_index": initial_index}
+
+        def _selected_summary() -> Optional[SessionSummary]:
+            if not filtered_entries:
+                return None
+            index = max(0, min(picker_state["selected_index"], len(filtered_entries) - 1))
+            picker_state["selected_index"] = index
+            return filtered_entries[index]
+
+        def _refresh_filtered() -> None:
+            nonlocal filtered_entries
+            current_selected = _selected_summary()
+            filtered_entries = _filter_session_summaries(entries, search_buffer.text)
+            target_session_id = current_selected.session_id if current_selected is not None else default_session_id
+            picker_state["selected_index"] = next(
+                (index for index, item in enumerate(filtered_entries) if item.session_id == target_session_id),
+                0,
+            )
+            app = get_app_or_none()
+            if app is not None:
+                app.invalidate()
+
+        search_buffer.on_text_changed += lambda _: _refresh_filtered()
+
+        picker_bindings = KeyBindings()
+
+        @picker_bindings.add("down")
+        @picker_bindings.add("c-n")
+        def _picker_down(event) -> None:
+            if filtered_entries:
+                picker_state["selected_index"] = min(len(filtered_entries) - 1, picker_state["selected_index"] + 1)
+                event.app.invalidate()
+
+        @picker_bindings.add("up")
+        @picker_bindings.add("c-p")
+        def _picker_up(event) -> None:
+            if filtered_entries:
+                picker_state["selected_index"] = max(0, picker_state["selected_index"] - 1)
+                event.app.invalidate()
+
+        @picker_bindings.add("pageup")
+        def _picker_page_up(event) -> None:
+            if filtered_entries:
+                picker_state["selected_index"] = max(0, picker_state["selected_index"] - 8)
+                event.app.invalidate()
+
+        @picker_bindings.add("pagedown")
+        def _picker_page_down(event) -> None:
+            if filtered_entries:
+                picker_state["selected_index"] = min(len(filtered_entries) - 1, picker_state["selected_index"] + 8)
+                event.app.invalidate()
+
+        @picker_bindings.add("enter")
+        def _picker_accept(event) -> None:
+            selected = _selected_summary()
+            event.app.exit(result=selected.session_id if selected is not None else None)
+
+        @picker_bindings.add("escape")
+        @picker_bindings.add("c-c")
+        def _picker_cancel(event) -> None:
+            event.app.exit(result=None)
+
+        def _title_fragments():
+            return [
+                ("class:picker.title", "Resume a previous session"),
+                ("", "  "),
+                ("class:picker.sort_label", "Sort: "),
+                ("class:picker.sort_value", "Updated"),
+            ]
+
+        def _search_label_fragments():
+            if search_buffer.text:
+                return [("class:picker.search_prompt", "Search")]
+            return [("class:picker.search_empty", "Type to search")]
+
+        def _header_fragments():
+            widths = _session_picker_column_widths(max(72, _get_terminal_width() - 4))
+            return [
+                ("class:picker.header", "  "),
+                ("class:picker.header", _fit_session_picker_cell("Created", widths["created"])),
+                ("", "  "),
+                ("class:picker.header", _fit_session_picker_cell("Updated", widths["updated"])),
+                ("", "  "),
+                ("class:picker.header", _fit_session_picker_cell("Branch", widths["branch"])),
+                ("", "  "),
+                ("class:picker.header", _fit_session_picker_cell("Conversation", widths["conversation"])),
+            ]
+
+        def _rows_fragments():
+            if not filtered_entries:
+                return [("class:picker.empty", "  No sessions match your search.")]
+
+            total_width = max(72, _get_terminal_width() - 4)
+            fragments = []
+            for index, summary in enumerate(filtered_entries):
+                created, updated, branch, conversation = _build_session_picker_row_text(summary, total_width)
+                is_selected = index == picker_state["selected_index"]
+                text_style = "class:picker.selected" if is_selected else "class:picker.text"
+                branch_style = "class:picker.selected_branch" if is_selected else "class:picker.branch"
+                marker_style = "class:picker.selected_marker" if is_selected else "class:picker.marker"
+                marker = "> " if is_selected else "  "
+                fragments.extend(
+                    [
+                        (marker_style, marker),
+                        (text_style, created),
+                        ("", "  "),
+                        (text_style, updated),
+                        ("", "  "),
+                        (branch_style, branch),
+                        ("", "  "),
+                        (text_style, conversation),
+                        ("", "\n"),
+                    ]
+                )
+            if fragments:
+                fragments.pop()
+            return fragments
+
+        def _footer_fragments():
+            return [("class:picker.footer", "Enter resume  Esc cancel  Up/Down navigate")]
+
+        search_window = Window(
+            content=BufferControl(
+                buffer=search_buffer,
+                input_processors=[BeforeInput("  ")],
+            ),
+            height=1,
+            style="class:picker.search_input",
+            always_hide_cursor=False,
+        )
+        root = VSplit(
+            [
+                Window(width=1, char=" "),
+                HSplit(
+                    [
+                        Window(height=1, content=FormattedTextControl(_title_fragments)),
+                        Window(height=1, content=FormattedTextControl(_search_label_fragments)),
+                        search_window,
+                        Window(height=1, char=" "),
+                        Window(height=1, content=FormattedTextControl(_header_fragments)),
+                        Window(content=FormattedTextControl(_rows_fragments), always_hide_cursor=True),
+                        Window(height=1, char=" "),
+                        Window(height=1, content=FormattedTextControl(_footer_fragments)),
+                    ]
+                ),
+                Window(width=1, char=" "),
+            ]
+        )
+
+        try:
+            app = Application(
+                layout=Layout(root, focused_element=search_window),
+                key_bindings=picker_bindings,
+                full_screen=True,
+                style=style,
+            )
+            return await app.run_async()
+        finally:
+            if was_streaming:
+                ui_state["streaming"] = True
+                prompt_task = asyncio.create_task(_prompt_once())
+            _invalidate_prompt()
+
     async def _prompt_path_access(prompt: str) -> bool:
         decision = await _prompt_modal(prompt)
         return decision.strip().lower() in {"y", "yes"}
@@ -551,26 +914,102 @@ async def run_tui(cwd: str) -> None:
     agent.runtime_mode = "chat"
 
     session_store = SessionStore(cwd)
-    session_id, restored_messages, restore_metadata = session_store.load_state_with_metadata()
-    agent.trace_session_id = session_id
-    if restored_messages:
-        agent.set_messages(restored_messages)
-        if restore_metadata.has_checkpoint:
+    agent.trace_session_id = session_store.new_session_id()
+
+    def _print_session_restored_notice(
+        session_id: str,
+        restore_metadata,
+        *,
+        source: str = "previous session",
+    ) -> None:
+        if restore_metadata.restored_message_count == 0:
+            console.print(f"[italic dim]Resumed empty {source} {session_id}.[/italic dim]")
+        elif restore_metadata.has_checkpoint:
             console.print(
                 "[italic dim]"
                 f"Restored checkpoint ({restore_metadata.checkpointed_message_count} compacted messages) "
-                f"+ {restore_metadata.recent_message_count} recent messages from the previous session."
+                f"+ {restore_metadata.recent_message_count} recent messages from {source} {session_id}."
                 "[/italic dim]"
             )
         else:
             console.print(
-                f"[italic dim]Restored {len(restored_messages)} messages from the previous session.[/italic dim]"
+                f"[italic dim]Restored {restore_metadata.restored_message_count} messages from {source} {session_id}.[/italic dim]"
             )
         console.print()
+
+    def _load_session_into_agent(session_id: str) -> bool:
+        nonlocal token_count
+        loaded_session_id, restored_messages, restore_metadata = session_store.load_state_with_metadata(session_id=session_id)
+        if not restored_messages and not session_store.session_exists(session_id):
+            return False
+        agent.clear_messages()
+        agent.set_messages(restored_messages)
+        agent.trace_session_id = loaded_session_id
+        token_count = sum(len(message_text(m).split()) for m in agent.messages)
+        console.clear()
+        _print_header(agent)
+        _print_session_restored_notice(loaded_session_id, restore_metadata, source="session")
+        return True
+
+    async def _prompt_resume_session_choice() -> Optional[str]:
+        entries = session_store.list_sessions(limit=12)
+        if not entries:
+            console.print("[dim]No saved sessions available to resume.[/dim]")
+            console.print()
+            return None
+        return await _prompt_session_picker(entries)
+
+    async def _resume_session(selected_session_id: Optional[str] = None) -> None:
+        nonlocal token_count
+        if agent.messages:
+            session_store.save_messages(agent.messages, session_id=agent.trace_session_id)
+
+        target_session_id = selected_session_id or await _prompt_resume_session_choice()
+        if not target_session_id:
+            return
+
+        if not _load_session_into_agent(target_session_id):
+            console.print(f"[dim]Session {target_session_id} was not found.[/dim]")
+            console.print()
+
+    def _start_new_session() -> None:
+        nonlocal token_count
+        if agent.messages:
+            session_store.save_messages(agent.messages, session_id=agent.trace_session_id)
+
+        agent.clear_messages()
+        agent.trace_session_id = session_store.new_session_id()
+        token_count = 0
+        console.clear()
+        _print_header(agent)
+        console.print(f"[italic dim]Started a new session {agent.trace_session_id}.[/italic dim]")
+        console.print()
+
+    def _exit_tui() -> None:
+        session_store.save_messages(agent.messages, session_id=agent.trace_session_id)
+        console.print(f"[dim]{build_resume_hint_text(agent.trace_session_id)}[/dim]")
+        console.print("[dim]Bye![/dim]")
+
+    if resume:
+        target_session_id = resume_session_id or next(
+            (entry.session_id for entry in session_store.list_sessions(limit=1)),
+            None,
+        )
+        if target_session_id and _load_session_into_agent(target_session_id):
+            pass
+        elif resume_session_id:
+            console.print(f"[italic dim]Session {resume_session_id} was not found. Started a new session.[/italic dim]")
+            console.print()
+            agent.trace_session_id = session_store.new_session_id()
+        else:
+            console.print("[italic dim]No previous session found. Started a new session.[/italic dim]")
+            console.print()
+            agent.trace_session_id = session_store.new_session_id()
     command_sources = [*BUILTIN_COMMANDS, *[skill.__dict__ for skill in getattr(agent, "skills", [])]]
 
-    _print_header(agent)
-
+    if not resume or not agent.messages:
+        _print_header(agent)
+    token_count = sum(len(message_text(m).split()) for m in agent.messages)
     model = getattr(agent, "model", "unknown")
     cwd_path = Path(getattr(agent, "cwd", cwd)).resolve().as_posix()
     session = PromptSession(
@@ -649,13 +1088,12 @@ async def run_tui(cwd: str) -> None:
                 continue
 
             if text in {"/exit", "/quit"}:
-                session_store.save_messages(agent.messages, session_id=agent.trace_session_id)
-                console.print("[dim]Bye![/dim]")
+                _exit_tui()
                 break
 
             if text == "/help":
                 _print_user_message(text)
-                console.print("[dim]Commands: /help, /status, /abort, /cancel, /clear, /exit[/dim]")
+                console.print("[dim]Commands: /help, /new, /resume, /status, /abort, /cancel, /clear, /quit[/dim]")
                 skills = getattr(agent, "skills", [])
                 if skills:
                     console.print("[dim]Skills:[/dim]")
@@ -665,9 +1103,23 @@ async def run_tui(cwd: str) -> None:
                 prompt_task = asyncio.create_task(_prompt_once())
                 continue
 
+            if text == "/new":
+                _print_user_message(text)
+                _start_new_session()
+                prompt_task = asyncio.create_task(_prompt_once())
+                continue
+
+            if text.startswith("/resume"):
+                _print_user_message(text)
+                requested_session_id = text.split(" ", 1)[1].strip() if " " in text else None
+                await _resume_session(requested_session_id or None)
+                prompt_task = asyncio.create_task(_prompt_once())
+                continue
+
             if text == "/clear":
                 agent.clear_messages()
-                session_store.clear()
+                session_store.clear(session_id=agent.trace_session_id)
+                token_count = 0
                 console.clear()
                 _print_header(agent)
                 console.print("[dim]Cleared conversation history.[/dim]")
@@ -788,7 +1240,7 @@ async def run_tui(cwd: str) -> None:
                     console.print("[italic dim](no output; inspect `xagent trace latest` for the full event trail)[/italic dim]")
                     console.print()
 
-                token_count += sum(len(message_text(m).split()) for m in agent.messages)
+                token_count = sum(len(message_text(m).split()) for m in agent.messages)
                 session_store.save_messages(agent.messages, session_id=agent.trace_session_id)
                 console.print(f"[italic dim]Completed in {duration:.2f}s[/italic dim]")
                 console.print()

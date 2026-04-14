@@ -83,7 +83,11 @@ def _dump_config(config: AppConfig) -> str:
 
 
 def dump_config_yaml(config: AppConfig) -> str:
-    lines = [f'default_model: "{_quote_yaml(config.default_model)}"', "models:"]
+    lines = [
+        f'default_model: "{_quote_yaml(config.default_model)}"',
+        f"max_model_calls: {config.max_model_calls}",
+        "models:",
+    ]
     for model in config.models:
         lines.append(f'  - name: "{_quote_yaml(model.name)}"')
         lines.append(f'    provider: "{_quote_yaml(model.provider)}"')
@@ -115,6 +119,15 @@ def _parse_config_yaml(raw: str) -> Dict[str, Any]:
         if stripped.startswith("default_model:"):
             _, value = stripped.split(":", 1)
             data["default_model"] = _parse_yaml_scalar(value.strip())
+            continue
+
+        if stripped.startswith("max_model_calls:"):
+            _, value = stripped.split(":", 1)
+            raw_value = _parse_yaml_scalar(value.strip())
+            try:
+                data["max_model_calls"] = int(raw_value)
+            except ValueError as exc:
+                raise ValueError(f"Invalid max_model_calls value: {raw_value}") from exc
             continue
 
         if stripped.startswith("- "):

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from xagent.coding.tools._ignore import is_visible_path
 from xagent.coding.workspace import resolve_tool_path
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 
@@ -20,6 +21,8 @@ async def _glob_search(args: GlobSearchInput, ctx: ToolContext) -> ToolResult:
 
     matches = []
     for item in target.glob(args.pattern):
+        if not is_visible_path(item, target):
+            continue
         matches.append(item.resolve().relative_to(root).as_posix())
         if len(matches) >= args.limit:
             break

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from xagent.coding.tools._ignore import iter_visible_entries
 from xagent.coding.workspace import resolve_tool_path
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 
@@ -20,10 +21,9 @@ async def _list_files(args: ListFilesInput, ctx: ToolContext) -> ToolResult:
         return ToolResult.fail(f"Path is not a directory: {args.path}", code="PATH_NOT_DIRECTORY")
 
     root = Path(ctx.cwd).resolve()
-    iterator = target.rglob("*") if args.recursive else target.iterdir()
     entries = []
 
-    for item in iterator:
+    for item in iter_visible_entries(target, recursive=args.recursive):
         relative = item.relative_to(root).as_posix()
         suffix = "/" if item.is_dir() else ""
         entries.append(relative + suffix)

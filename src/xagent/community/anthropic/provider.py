@@ -6,9 +6,8 @@ from typing import Any, AsyncIterator
 
 from anthropic import AsyncAnthropic
 
-from xagent.cli.config.schema import ModelConfig
 from xagent.foundation.messages import Message, TextPart, ToolUsePart, message_text
-from xagent.foundation.models import ModelRequest
+from xagent.foundation.models import ModelConfig, ModelRequest
 
 
 class AnthropicProvider:

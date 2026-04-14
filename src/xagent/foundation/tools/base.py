@@ -5,6 +5,8 @@ from typing import Any, Awaitable, Callable, Optional, Type
 
 from pydantic import BaseModel, Field
 
+from xagent.foundation.runtime.errors import WorkspaceEscapeError
+
 
 class ToolContext(BaseModel):
     cwd: str
@@ -82,9 +84,9 @@ class Tool:
             if inspect.isawaitable(result):
                 result = await result
             return result
-        except Exception as exc:
-            if exc.__class__.__name__ == "WorkspaceEscapeError":
-                return ToolResult.fail(str(exc), code="WORKSPACE_ESCAPE")
+        except WorkspaceEscapeError as exc:
+            return ToolResult.fail(str(exc), code="WORKSPACE_ESCAPE")
+        except Exception:
             raise
 
 

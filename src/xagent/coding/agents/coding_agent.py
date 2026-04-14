@@ -13,6 +13,7 @@ def create_coding_agent(
     provider,
     model: str,
     cwd: str,
+    max_steps: int = 100,
     middlewares: Optional[list[AgentMiddleware]] = None,
     approval_handler: Optional[Callable] = None,
     ask_user_question: Optional[Callable] = None,
@@ -41,12 +42,11 @@ Use the given tools and loaded skills to solve the user's request in the working
 - Prefer list_files or glob_search to discover files.
 - Prefer grep_search to locate relevant content.
 - Read a file before editing it.
-- Prefer apply_patch or str_replace for targeted edits.
-- Use write_file only for full rewrites or brand-new files.
-- If an edit strategy fails, re-read the file and choose a safer next step.
+- Use str_replace for exact string replacements inside one file.
+- Prefer apply_patch when you have a unified diff style edit with explicit hunks.
+- If apply_patch fails, re-read the file and choose a safer edit strategy.
 - Do not repeat the same failing tool call with unchanged invalid input.
-- Use tool results and error messages to decide the next step.
-- Use todo_write for complex, multi-step tasks when tracking progress would help.
+- Use tool result summaries and error codes to decide the next step.
 </tool_usage>
 
 <editing_rules>
@@ -56,8 +56,8 @@ Use the given tools and loaded skills to solve the user's request in the working
 </editing_rules>
 
 <notes>
-- If the request is simple and does not need tools, answer directly and stop.
-- Do not start long-running local servers unless the user explicitly asks.
+- Never try to start a local static server. Let the user do it.
+- If the user's input is a simple task or a greeting, you should just respond with a simple answer and then stop.
 </notes>"""
     context_messages = []
     project_rules_middleware = []
@@ -90,6 +90,7 @@ Use the given tools and loaded skills to solve the user's request in the working
             *(middlewares or []),
         ],
         cwd=cwd,
+        max_steps=max_steps,
         approval_handler=approval_handler,
     )
     agent.todo_store = todo_store

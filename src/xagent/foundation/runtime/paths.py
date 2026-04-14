@@ -40,6 +40,10 @@ def get_session_file(start: Optional[Path] = None) -> Path:
     return get_config_dir(start) / "session.json"
 
 
+def get_sessions_dir(start: Optional[Path] = None) -> Path:
+    return get_config_dir(start) / "sessions"
+
+
 def get_traces_dir(start: Optional[Path] = None) -> Path:
     return get_config_dir(start) / "traces"
 

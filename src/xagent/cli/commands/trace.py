@@ -11,7 +11,7 @@ from xagent.agent.traces import (
     summarize_sessions,
     summarize_trace,
 )
-from xagent.cli.tui.render import console, print_error, print_info, print_panel
+from xagent.cli.tui.render import print_error, print_info, print_panel
 
 trace_app = typer.Typer(help="Inspect local XAgent traces.")
 

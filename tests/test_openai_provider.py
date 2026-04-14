@@ -7,7 +7,7 @@ from unittest.mock import patch
 from xagent.cli.config.schema import ModelConfig
 from xagent.foundation.messages import Message, TextPart, ToolResultPart, ToolUsePart
 from xagent.foundation.models import ModelRequest
-from xagent.community.openai import OpenAIChatProvider, _from_openai_message, _to_openai_messages
+from xagent.community.openai import OpenAIChatProvider, _to_openai_messages
 
 
 class _FakeStream:
@@ -159,3 +159,16 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.role, "assistant")
         self.assertEqual(message.content[0].text, "Final answer")
         self.assertEqual(message.content[1].name, "read_file")
+
+    def test_openai_message_conversion_skips_tool_messages_without_tool_result(self) -> None:
+        request = ModelRequest(
+            model="gpt-4o-mini",
+            messages=[
+                Message(role="user", content=[TextPart(text="user")]),
+                Message(role="tool", content=[TextPart(text="missing tool result")]),
+            ],
+        )
+
+        converted = _to_openai_messages(request)
+
+        self.assertEqual(converted, [{"role": "user", "content": "user"}])

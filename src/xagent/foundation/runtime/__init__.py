@@ -1,3 +1,4 @@
+from xagent.foundation.runtime.errors import WorkspaceEscapeError
 from xagent.foundation.runtime.paths import (
     ensure_config_dir,
     find_project_root,
@@ -8,6 +9,7 @@ from xagent.foundation.runtime.paths import (
     get_config_file,
     get_env_file,
     get_session_file,
+    get_sessions_dir,
     get_trace_artifacts_dir,
     get_trace_index_file,
     get_traces_dir,
@@ -23,7 +25,9 @@ __all__ = [
     "get_config_file",
     "get_env_file",
     "get_session_file",
+    "get_sessions_dir",
     "get_trace_artifacts_dir",
     "get_trace_index_file",
     "get_traces_dir",
+    "WorkspaceEscapeError",
 ]

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import Any, Awaitable, Callable, List, Optional, Union
+from typing import Awaitable, Callable, List, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 
