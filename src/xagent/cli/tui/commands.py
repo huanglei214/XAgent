@@ -4,6 +4,8 @@ from typing import Dict, List, Optional
 BUILTIN_COMMANDS: List[Dict[str, str]] = [
     {"name": "help", "description": "Show available slash commands", "type": "builtin"},
     {"name": "status", "description": "Show current session status", "type": "builtin"},
+    {"name": "abort", "description": "Abort the current running turn", "type": "builtin"},
+    {"name": "cancel", "description": "Abort the current running turn", "type": "builtin"},
     {"name": "clear", "description": "Clear the current conversation history", "type": "builtin"},
     {"name": "exit", "description": "Exit the TUI", "type": "builtin"},
     {"name": "quit", "description": "Exit the TUI", "type": "builtin"},

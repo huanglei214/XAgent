@@ -13,8 +13,43 @@ class ToolContext(BaseModel):
 
 
 class ToolResult(BaseModel):
-    content: str
+    content: str = ""
     is_error: bool = False
+    summary: Optional[str] = None
+    data: Any = None
+    error: Optional[str] = None
+    code: Optional[str] = None
+    details: Any = None
+
+    @classmethod
+    def ok(
+        cls,
+        summary: str,
+        *,
+        content: Optional[str] = None,
+        data: Any = None,
+        details: Any = None,
+    ) -> "ToolResult":
+        return cls(content=content or summary, is_error=False, summary=summary, data=data, details=details)
+
+    @classmethod
+    def fail(
+        cls,
+        error: str,
+        *,
+        summary: Optional[str] = None,
+        code: Optional[str] = None,
+        content: Optional[str] = None,
+        details: Any = None,
+    ) -> "ToolResult":
+        return cls(
+            content=content or error,
+            is_error=True,
+            summary=summary or error,
+            error=error,
+            code=code,
+            details=details,
+        )
 
 
 class Tool:
@@ -49,7 +84,7 @@ class Tool:
             return result
         except Exception as exc:
             if exc.__class__.__name__ == "WorkspaceEscapeError":
-                return ToolResult(content=str(exc), is_error=True)
+                return ToolResult.fail(str(exc), code="WORKSPACE_ESCAPE")
             raise
 
 

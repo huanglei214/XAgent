@@ -10,6 +10,7 @@ from xagent.agent.traces.recorder import TraceRecorder, classify_task_kind
 class TraceMiddleware(AgentMiddleware):
     def __init__(self) -> None:
         self._started = None
+        self._model_call_index = 0
 
     async def before_agent_run(self, *, agent, user_text: str) -> None:
         recorder = TraceRecorder(
@@ -24,6 +25,7 @@ class TraceMiddleware(AgentMiddleware):
         agent.trace_recorder = recorder
         agent.last_trace_recorder = recorder
         self._started = perf_counter()
+        self._model_call_index = 0
         recorder.emit("task_started", payload={"input": user_text}, tags={"status": "started"})
         recorder.emit("user_input", payload={"text": user_text})
 
@@ -60,12 +62,31 @@ class TraceMiddleware(AgentMiddleware):
     async def before_model(self, *, agent, request):
         recorder = getattr(agent, "trace_recorder", None)
         if recorder is not None:
+            self._model_call_index += 1
+            artifact_path = recorder.write_artifact(
+                f"step-{self._model_call_index}-request.json",
+                request.model_dump(mode="json"),
+            )
+            recorder.emit(
+                "model_request_artifact_written",
+                payload={"artifact_path": str(artifact_path), "model_call_index": self._model_call_index},
+                tags={"status": "written", "step": self._model_call_index},
+            )
             recorder.emit("model_request", payload=request.model_dump(mode="json"))
         return request
 
     async def after_model(self, *, agent, assistant_message) -> None:
         recorder = getattr(agent, "trace_recorder", None)
         if recorder is not None:
+            artifact_path = recorder.write_artifact(
+                f"step-{self._model_call_index}-response.json",
+                assistant_message.model_dump(mode="json"),
+            )
+            recorder.emit(
+                "model_response_artifact_written",
+                payload={"artifact_path": str(artifact_path), "model_call_index": self._model_call_index},
+                tags={"status": "written", "step": self._model_call_index},
+            )
             recorder.emit("model_response", payload=assistant_message.model_dump(mode="json"))
 
     async def before_tool(self, *, agent, tool_use):

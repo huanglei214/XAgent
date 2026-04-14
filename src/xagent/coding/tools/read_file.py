@@ -16,9 +16,9 @@ class ReadFileInput(BaseModel):
 async def _read_file(args: ReadFileInput, ctx: ToolContext) -> ToolResult:
     target = await resolve_tool_path(ctx, args.path, "read")
     if not target.exists():
-        return ToolResult(content=f"File not found: {args.path}", is_error=True)
+        return ToolResult.fail(f"File not found: {args.path}", code="FILE_NOT_FOUND")
     if not target.is_file():
-        return ToolResult(content=f"Path is not a file: {args.path}", is_error=True)
+        return ToolResult.fail(f"Path is not a file: {args.path}", code="PATH_NOT_FILE")
 
     text = target.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -26,11 +26,15 @@ async def _read_file(args: ReadFileInput, ctx: ToolContext) -> ToolResult:
     start = (args.start_line - 1) if args.start_line else 0
     end = args.end_line if args.end_line else len(lines)
     if start < 0 or end < start:
-        return ToolResult(content="Invalid line range requested.", is_error=True)
+        return ToolResult.fail("Invalid line range requested.", code="INVALID_LINE_RANGE")
 
     selected = lines[start:end]
     numbered = [f"{index + start + 1:>4}: {line}" for index, line in enumerate(selected)]
-    return ToolResult(content="\n".join(numbered) if numbered else "")
+    return ToolResult.ok(
+        f"Read {len(selected)} line(s) from {args.path}.",
+        content="\n".join(numbered) if numbered else "",
+        data={"path": args.path, "start_line": args.start_line, "end_line": args.end_line, "line_count": len(selected)},
+    )
 
 
 read_file_tool = Tool(

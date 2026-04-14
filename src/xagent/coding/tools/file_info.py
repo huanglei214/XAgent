@@ -13,7 +13,7 @@ class FileInfoInput(BaseModel):
 async def _file_info(args: FileInfoInput, ctx: ToolContext) -> ToolResult:
     target = await resolve_tool_path(ctx, args.path, "read")
     if not target.exists():
-        return ToolResult(content=f"Path not found: {args.path}", is_error=True)
+        return ToolResult.fail(f"Path not found: {args.path}", code="PATH_NOT_FOUND")
 
     stat = target.stat()
     lines = [
@@ -23,7 +23,17 @@ async def _file_info(args: FileInfoInput, ctx: ToolContext) -> ToolResult:
         f"modified_at: {datetime.fromtimestamp(stat.st_mtime).isoformat()}",
         f"absolute_path: {target}",
     ]
-    return ToolResult(content="\n".join(lines))
+    return ToolResult.ok(
+        f"Loaded file info for {args.path}.",
+        content="\n".join(lines),
+        data={
+            "path": args.path,
+            "type": "directory" if target.is_dir() else "file",
+            "size_bytes": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "absolute_path": str(target),
+        },
+    )
 
 
 file_info_tool = Tool(

@@ -14,10 +14,11 @@ from xagent.cli.config.env import load_project_env
 from xagent.cli.config.loader import load_config, resolve_default_model
 from xagent.foundation.messages import ToolUsePart, message_text
 from xagent.community import create_provider
+from xagent.agent.core.loop import AgentAborted
 from xagent.agent.traces import TraceMiddleware
 
 
-def build_runtime_agent(cwd: str):
+def build_runtime_agent(cwd: str, ask_user_question: Optional[Callable] = None):
     load_project_env(Path(cwd))
     config = load_config()
     model_config = resolve_default_model(config)
@@ -27,6 +28,7 @@ def build_runtime_agent(cwd: str):
         provider=provider,
         model=model_config.name,
         cwd=cwd,
+        ask_user_question=ask_user_question,
         middlewares=[
             TraceMiddleware(),
             ApprovalMiddleware(approval_store=approval_store, prompt_fn=lambda prompt: typer.prompt(prompt, default="n")),
@@ -94,6 +96,14 @@ async def run_agent_turn_stream(agent, prompt: str, on_assistant_delta=None, on_
             on_assistant_delta=on_assistant_delta,
         )
         return message, time.perf_counter() - started
+    except AgentAborted as exc:
+        duration = time.perf_counter() - started
+        recorder = getattr(agent, "trace_recorder", None)
+        if recorder is not None:
+            recorder.record_state_snapshot(agent, "cancelled", extra={"error": str(exc)})
+            recorder.finish_cancelled(reason=str(exc), duration_seconds=duration)
+            agent.trace_recorder = None
+        raise
     except Exception as exc:
         duration = time.perf_counter() - started
         recorder = getattr(agent, "trace_recorder", None)

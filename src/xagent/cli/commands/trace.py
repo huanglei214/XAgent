@@ -102,6 +102,7 @@ def trace_failed(limit: int = typer.Option(10, min=1, max=200, help="Maximum fai
 
 def _render_trace(summary, events_limit: int) -> None:
     derived = summarize_trace(summary)
+    events = load_trace_events(summary.get("trace_file", ""))
     body = (
         f"Trace ID: {summary.get('trace_id')}\n"
         f"Session ID: {summary.get('session_id')}\n"
@@ -119,8 +120,11 @@ def _render_trace(summary, events_limit: int) -> None:
     )
     print_panel("Trace Summary", body)
     print_panel("Trace Stats", _render_trace_stats(derived))
+    artifact_lines = _render_trace_artifacts(events)
+    if artifact_lines:
+        print_panel("Trace Artifacts", artifact_lines)
 
-    events = load_trace_events(summary.get("trace_file", ""))[-events_limit:]
+    events = events[-events_limit:]
     if not events:
         print_info("No events found for this trace.")
         return
@@ -188,4 +192,17 @@ def _render_trace_stats(derived: dict) -> str:
             + ", ".join(f"{decision}={count}" for decision, count in sorted(external_path_decisions.items()))
         )
 
+    return "\n".join(lines)
+
+
+def _render_trace_artifacts(events: list[dict]) -> str:
+    lines = []
+    for event in events:
+        event_type = str(event.get("event_type", ""))
+        if not event_type.endswith("_artifact_written"):
+            continue
+        payload = event.get("payload", {}) or {}
+        artifact_path = payload.get("artifact_path")
+        if artifact_path:
+            lines.append(f"{event_type}: {artifact_path}")
     return "\n".join(lines)

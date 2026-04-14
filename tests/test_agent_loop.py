@@ -1,9 +1,10 @@
 import asyncio
+import time
 import unittest
 
 from pydantic import BaseModel
 
-from xagent.agent.core import Agent, AgentMiddleware
+from xagent.agent.core import Agent, AgentAborted, AgentMiddleware
 from xagent.foundation.messages import Message, TextPart, ToolUsePart, message_text
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 
@@ -39,6 +40,10 @@ class _SlowProvider:
     async def stream_text(self, request):  # pragma: no cover - not used here
         yield ""
 
+    async def stream_complete(self, request):
+        await asyncio.sleep(0.2)
+        yield Message(role="assistant", content=[TextPart(text="late")])
+
 
 class _RepeatingToolProvider:
     async def complete(self, request):
@@ -69,6 +74,26 @@ class _ErrorLoopProvider:
                 )
             ],
         )
+
+    async def stream_text(self, request):  # pragma: no cover - not used here
+        yield ""
+
+
+class _ParallelToolProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, request):
+        self.calls += 1
+        if self.calls == 1:
+            return Message(
+                role="assistant",
+                content=[
+                    ToolUsePart(id="tool_1", name="slow_tool", input={"value": "first"}),
+                    ToolUsePart(id="tool_2", name="slow_tool", input={"value": "second"}),
+                ],
+            )
+        return Message(role="assistant", content=[TextPart(text="done")])
 
     async def stream_text(self, request):  # pragma: no cover - not used here
         yield ""
@@ -202,4 +227,77 @@ class AgentLoopTests(unittest.IsolatedAsyncioTestCase):
             await agent.run("say hi")
 
         self.assertEqual(agent.last_termination_reason, "consecutive_tool_errors")
+        self.assertEqual(agent.last_error_stage, "agent")
+
+    async def test_agent_emits_runtime_decision_event_for_tool_selection(self) -> None:
+        events = []
+
+        provider = _FakeProvider()
+        agent = Agent(
+            provider=provider,
+            model="ep-test",
+            system_prompt="You are XAgent",
+            tools=[],
+            cwd=".",
+        )
+        agent.runtime_event_sink = lambda event_type, payload: events.append((event_type, payload))
+
+        await agent.run("say hi")
+
+        decision_events = [event for event in events if event[0] == "agent_decision"]
+        self.assertTrue(decision_events)
+        self.assertIn("echo_tool", decision_events[0][1]["summary"])
+
+    async def test_agent_executes_multiple_tools_in_parallel_and_preserves_order(self) -> None:
+        async def _handler(args, ctx: ToolContext) -> ToolResult:
+            await asyncio.sleep(0.05)
+            return ToolResult.ok(f"Finished {args.value}.", content=f"raw:{args.value}")
+
+        class SlowInput(BaseModel):
+            value: str
+
+        tool = Tool(
+            name="slow_tool",
+            description="Sleeps briefly then returns.",
+            input_model=SlowInput,
+            handler=_handler,
+        )
+
+        provider = _ParallelToolProvider()
+        agent = Agent(
+            provider=provider,
+            model="ep-test",
+            system_prompt="You are XAgent",
+            tools=[tool],
+            cwd=".",
+        )
+
+        started = time.perf_counter()
+        message = await agent.run("run two tools")
+        elapsed = time.perf_counter() - started
+
+        self.assertEqual(message_text(message), "done")
+        self.assertLess(elapsed, 0.095)
+        tool_messages = [m for m in agent.messages if m.role == "tool"]
+        self.assertEqual(len(tool_messages), 2)
+        self.assertIn("Finished first.", tool_messages[0].content[0].content)
+        self.assertIn("Finished second.", tool_messages[1].content[0].content)
+
+    async def test_agent_abort_stops_running_turn(self) -> None:
+        agent = Agent(
+            provider=_SlowProvider(),
+            model="ep-test",
+            system_prompt="You are XAgent",
+            tools=[],
+            cwd=".",
+        )
+
+        task = asyncio.create_task(agent.run("say hi"))
+        await asyncio.sleep(0.02)
+        agent.abort()
+
+        with self.assertRaises(AgentAborted):
+            await task
+
+        self.assertEqual(agent.last_termination_reason, "aborted")
         self.assertEqual(agent.last_error_stage, "agent")

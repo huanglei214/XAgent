@@ -18,6 +18,8 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
 from xagent.agent.session import SessionStore
+from xagent.agent.tool_result_runtime import summarize_tool_result_for_ui
+from xagent.agent.core import AgentAborted
 from xagent.cli.runtime.runtime import (
     build_runtime_agent,
     format_runtime_error,
@@ -27,6 +29,7 @@ from xagent.cli.runtime.runtime import (
 )
 from xagent.cli.tui.commands import BUILTIN_COMMANDS
 from xagent.coding.middleware import ApprovalMiddleware
+from xagent.coding.tools.ask_user_question import AskUserQuestionAnswer, AskUserQuestionInput, AskUserQuestionResultData
 from xagent.foundation.messages import Message, ToolResultPart, ToolUsePart, message_text
 
 
@@ -165,7 +168,7 @@ def _render_message_blocks(message: Message) -> List[str]:
         for part in message.content:
             if isinstance(part, ToolResultPart):
                 prefix = "✖" if part.is_error else "✓"
-                blocks.append(f"{prefix} {part.content}")
+                blocks.append(f"{prefix} {summarize_tool_result_for_ui('', part.content, part.is_error)}")
         return blocks
 
     return blocks
@@ -240,11 +243,83 @@ def _print_tool_result(result: ToolResultPart) -> None:
     """打印工具结果。"""
     marker = "✖" if result.is_error else "✓"
     style = "red" if result.is_error else "dim"
-    truncated = result.content if len(result.content) <= 200 else result.content[:197] + "..."
+    summary = summarize_tool_result_for_ui("", result.content, result.is_error)
+    truncated = summary if len(summary) <= 200 else summary[:197] + "..."
     line = Text()
     line.append(f"  └─ {marker} ", style=style)
     line.append(truncated, style=style)
     console.print(line)
+
+
+def _format_runtime_block(title: str, lines: list[str]) -> str:
+    normalized = [line.strip() for line in lines if line and line.strip()]
+    if not normalized:
+        normalized = ["-"]
+    body = "\n".join(f"  {line}" for line in normalized)
+    return f"{title}\n{body}"
+
+
+def _print_runtime_block(title: str, lines: list[str]) -> None:
+    block = _format_runtime_block(title, lines)
+    rendered = Text()
+    first = True
+    for line in block.splitlines():
+        if first:
+            rendered.append(line, style="bold cyan")
+            first = False
+        else:
+            rendered.append("\n")
+            rendered.append(line, style="dim")
+    console.print(rendered)
+    console.print()
+
+
+async def _ask_user_questions_via_prompt(
+    prompt_fn,
+    params: AskUserQuestionInput,
+) -> AskUserQuestionResultData:
+    answers = []
+    for index, question in enumerate(params.questions):
+        lines = [question.question]
+        for option_index, option in enumerate(question.options, start=1):
+            lines.append(f"{option_index}. {option.label} — {option.description}")
+        lines.append(
+            "Reply with one number."
+            if not question.multi_select
+            else "Reply with one or more numbers separated by commas."
+        )
+
+        while True:
+            raw = await prompt_fn(_format_runtime_block(question.header, lines))
+            try:
+                selected = _parse_question_selection(raw, question.multi_select, len(question.options))
+            except ValueError:
+                continue
+            answers.append(
+                AskUserQuestionAnswer(
+                    question_index=index,
+                    selected_labels=[question.options[item - 1].label for item in selected],
+                )
+            )
+            break
+    return AskUserQuestionResultData(answers=answers)
+
+
+def _parse_question_selection(raw: str, multi_select: bool, option_count: int) -> list[int]:
+    tokens = [part.strip() for part in raw.split(",") if part.strip()]
+    if not tokens:
+        raise ValueError("empty selection")
+    values = []
+    for token in tokens:
+        if not token.isdigit():
+            raise ValueError("non numeric selection")
+        value = int(token)
+        if value < 1 or value > option_count:
+            raise ValueError("out of range")
+        values.append(value)
+    if not multi_select and len(values) != 1:
+        raise ValueError("single select requires exactly one answer")
+    return list(dict.fromkeys(values))
 
 
 def _print_status_bar(agent, token_count: int) -> None:
@@ -318,35 +393,7 @@ def _read_input() -> str:
 
 async def run_tui(cwd: str) -> None:
     """TUI 主入口 — 透明背景 + 固定底部输入 panel（非全屏）。"""
-    agent = build_runtime_agent(cwd)
-    agent.runtime_mode = "chat"
-
-    session_store = SessionStore(cwd)
-    session_id, restored_messages, restore_metadata = session_store.load_state_with_metadata()
-    agent.trace_session_id = session_id
-    if restored_messages:
-        agent.set_messages(restored_messages)
-        if restore_metadata.has_checkpoint:
-            console.print(
-                "[italic dim]"
-                f"Restored checkpoint ({restore_metadata.checkpointed_message_count} compacted messages) "
-                f"+ {restore_metadata.recent_message_count} recent messages from the previous session."
-                "[/italic dim]"
-            )
-        else:
-            console.print(
-                f"[italic dim]Restored {len(restored_messages)} messages from the previous session.[/italic dim]"
-            )
-        console.print()
-    command_sources = [*BUILTIN_COMMANDS, *[skill.__dict__ for skill in getattr(agent, "skills", [])]]
-
-    _print_header(agent)
-
     token_count = 0
-
-    model = getattr(agent, "model", "unknown")
-    cwd_path = Path(getattr(agent, "cwd", cwd)).resolve().as_posix()
-
     ui_state = {
         "streaming": False,
         "streaming_hint": "",
@@ -354,6 +401,7 @@ async def run_tui(cwd: str) -> None:
         "thinking_frame": 0,
         "thinking_label": "Thinking",
         "streaming_text": "",
+        "runtime_event_keys": set(),
     }
 
     style = Style.from_dict(
@@ -381,13 +429,15 @@ async def run_tui(cwd: str) -> None:
             return
         event.current_buffer.validate_and_handle()
 
-    session = PromptSession(
-        key_bindings=kb,
-        style=style,
-        erase_when_done=True,
-        completer=SlashCommandCompleter(command_sources),
-        complete_while_typing=True,
-    )
+    @kb.add("c-c")
+    def _on_ctrl_c(event) -> None:
+        if ui_state["streaming"]:
+            agent.abort()
+            _print_runtime_block("Cancelling run", ["User requested abort via Ctrl+C"])
+            return
+        event.app.exit(exception=KeyboardInterrupt())
+
+    session = None
     prompt_task: Optional[asyncio.Task[str]] = None
 
     def _invalidate_prompt() -> None:
@@ -494,10 +544,96 @@ async def run_tui(cwd: str) -> None:
         decision = await _prompt_modal(prompt)
         return decision.strip().lower() in {"y", "yes"}
 
+    async def _ask_user_questions(params: AskUserQuestionInput) -> AskUserQuestionResultData:
+        return await _ask_user_questions_via_prompt(_prompt_modal, params)
+
+    agent = build_runtime_agent(cwd, ask_user_question=_ask_user_questions)
+    agent.runtime_mode = "chat"
+
+    session_store = SessionStore(cwd)
+    session_id, restored_messages, restore_metadata = session_store.load_state_with_metadata()
+    agent.trace_session_id = session_id
+    if restored_messages:
+        agent.set_messages(restored_messages)
+        if restore_metadata.has_checkpoint:
+            console.print(
+                "[italic dim]"
+                f"Restored checkpoint ({restore_metadata.checkpointed_message_count} compacted messages) "
+                f"+ {restore_metadata.recent_message_count} recent messages from the previous session."
+                "[/italic dim]"
+            )
+        else:
+            console.print(
+                f"[italic dim]Restored {len(restored_messages)} messages from the previous session.[/italic dim]"
+            )
+        console.print()
+    command_sources = [*BUILTIN_COMMANDS, *[skill.__dict__ for skill in getattr(agent, "skills", [])]]
+
+    _print_header(agent)
+
+    model = getattr(agent, "model", "unknown")
+    cwd_path = Path(getattr(agent, "cwd", cwd)).resolve().as_posix()
+    session = PromptSession(
+        key_bindings=kb,
+        style=style,
+        erase_when_done=True,
+        completer=SlashCommandCompleter(command_sources),
+        complete_while_typing=True,
+    )
+
+    def _runtime_event_key(event_type: str, payload: dict) -> tuple:
+        if event_type in {"project_rules_loaded", "project_rules_context_injected"}:
+            return event_type, payload.get("scope_count"), payload.get("context_message_count")
+        if event_type == "skill_requested_detected":
+            return event_type, payload.get("requested_skill_name"), payload.get("source")
+        if event_type in {"skill_bundle_resolved", "skill_prompt_injected"}:
+            return event_type, tuple(payload.get("loaded_skill_names", []))
+        if event_type == "agent_decision":
+            return event_type, payload.get("summary")
+        return event_type, tuple(sorted(payload.items()))
+
+    def _handle_runtime_event(event_type: str, payload: dict) -> None:
+        key = _runtime_event_key(event_type, payload)
+        if key in ui_state["runtime_event_keys"]:
+            return
+        ui_state["runtime_event_keys"].add(key)
+
+        if event_type == "skill_requested_detected":
+            _print_runtime_block(
+                "Launching skill",
+                [f"{payload.get('requested_skill_name')} ({payload.get('source')})"],
+            )
+            return
+        if event_type == "project_rules_loaded":
+            _print_runtime_block(
+                "Loaded project rules",
+                [f"{payload.get('scope_count', 0)} scope(s), {payload.get('char_count', 0)} chars"],
+            )
+            return
+        if event_type == "project_rules_context_injected":
+            _print_runtime_block(
+                "Injected AGENTS context",
+                [f"{payload.get('context_message_count', 0)} context message(s)"],
+            )
+            return
+        if event_type == "skill_bundle_resolved":
+            loaded = payload.get("loaded_skill_names", [])
+            _print_runtime_block("Loaded skills", loaded or ["-"])
+            return
+        if event_type == "skill_prompt_injected":
+            loaded = payload.get("loaded_skill_names", [])
+            _print_runtime_block("Injected prompt", loaded or ["-"])
+            return
+        if event_type == "agent_decision":
+            summary = str(payload.get("summary", "")).strip()
+            if summary:
+                _print_runtime_block("Agent note", [summary])
+
     agent.request_path_access = make_external_path_approval_handler(
         prompt_fn=_prompt_path_access,
         recorder_getter=lambda: getattr(agent, "trace_recorder", None),
     )
+    agent.runtime_event_sink = _handle_runtime_event
     for middleware in getattr(agent, "middlewares", []):
         if isinstance(middleware, ApprovalMiddleware):
             middleware.prompt_fn = _prompt_modal
@@ -519,7 +655,7 @@ async def run_tui(cwd: str) -> None:
 
             if text == "/help":
                 _print_user_message(text)
-                console.print("[dim]Commands: /help, /clear, /status, /exit[/dim]")
+                console.print("[dim]Commands: /help, /status, /abort, /cancel, /clear, /exit[/dim]")
                 skills = getattr(agent, "skills", [])
                 if skills:
                     console.print("[dim]Skills:[/dim]")
@@ -546,6 +682,17 @@ async def run_tui(cwd: str) -> None:
                 prompt_task = asyncio.create_task(_prompt_once())
                 continue
 
+            if text in {"/abort", "/cancel"}:
+                _print_user_message(text)
+                if ui_state["streaming"]:
+                    agent.abort()
+                    _print_runtime_block("Cancelling run", ["User requested abort"])
+                else:
+                    console.print("[dim]No active run to abort.[/dim]")
+                    console.print()
+                prompt_task = asyncio.create_task(_prompt_once())
+                continue
+
             requested_skill_name = None
             if text.startswith("/"):
                 token = text[1:].split(" ", 1)[0]
@@ -560,6 +707,7 @@ async def run_tui(cwd: str) -> None:
                         continue
 
             _print_user_message(text)
+            ui_state["runtime_event_keys"] = set()
 
             ui_state["streaming"] = True
             
@@ -645,6 +793,9 @@ async def run_tui(cwd: str) -> None:
                 console.print(f"[italic dim]Completed in {duration:.2f}s[/italic dim]")
                 console.print()
 
+            except AgentAborted:
+                console.print("[yellow]Aborted current run.[/yellow]")
+                console.print()
             except Exception as exc:
                 console.print(f"[bold red]Error: {exc}[/bold red]")
                 console.print()

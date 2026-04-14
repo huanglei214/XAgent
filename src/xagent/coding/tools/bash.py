@@ -22,7 +22,16 @@ async def _bash(args: BashInput, ctx: ToolContext) -> ToolResult:
     except asyncio.TimeoutError:
         process.kill()
         await process.communicate()
-        return ToolResult(content=f"Command timed out after {args.timeout_seconds} seconds.", is_error=True)
+        return ToolResult.fail(
+            f"Command timed out after {args.timeout_seconds} seconds.",
+            summary=f"Command timed out after {args.timeout_seconds} seconds.",
+            code="BASH_TIMEOUT",
+            details={"command": args.command, "timeout_seconds": args.timeout_seconds},
+        )
+    except asyncio.CancelledError:
+        process.kill()
+        await process.communicate()
+        raise
 
     output = stdout.decode("utf-8", errors="replace")
     error_output = stderr.decode("utf-8", errors="replace")
@@ -31,11 +40,18 @@ async def _bash(args: BashInput, ctx: ToolContext) -> ToolResult:
         combined = f"{combined}\n{error_output.strip()}".strip()
 
     if process.returncode != 0:
-        return ToolResult(
+        return ToolResult.fail(
+            f"Command exited with status {process.returncode}.",
+            summary=f"Command exited with status {process.returncode}.",
+            code="BASH_EXIT_NONZERO",
             content=f"Command exited with status {process.returncode}.\n{combined}".strip(),
-            is_error=True,
+            details={"command": args.command, "exit_code": process.returncode, "stdout_stderr": combined},
         )
-    return ToolResult(content=combined or "(command completed with no output)")
+    return ToolResult.ok(
+        "Command completed successfully.",
+        content=combined or "(command completed with no output)",
+        data={"command": args.command, "output": combined or "", "exit_code": 0},
+    )
 
 
 bash_tool = Tool(

@@ -48,6 +48,10 @@ def get_trace_index_file(start: Optional[Path] = None) -> Path:
     return get_traces_dir(start) / "index.json"
 
 
+def get_trace_artifacts_dir(start: Optional[Path] = None) -> Path:
+    return get_traces_dir(start) / "artifacts"
+
+
 def ensure_config_dir(start: Optional[Path] = None) -> Path:
     config_dir = get_config_dir(start)
     config_dir.mkdir(parents=True, exist_ok=True)

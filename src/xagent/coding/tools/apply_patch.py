@@ -14,13 +14,13 @@ class ApplyPatchInput(BaseModel):
 async def _apply_patch(args: ApplyPatchInput, ctx: ToolContext) -> ToolResult:
     target = await resolve_tool_path(ctx, args.path, "write")
     if not target.exists():
-        return ToolResult(content=f"File not found: {args.path}", is_error=True)
+        return ToolResult.fail(f"File not found: {args.path}", code="FILE_NOT_FOUND")
     if not target.is_file():
-        return ToolResult(content=f"Path is not a file: {args.path}", is_error=True)
+        return ToolResult.fail(f"Path is not a file: {args.path}", code="PATH_NOT_FILE")
 
     text = target.read_text(encoding="utf-8")
     if args.old_text not in text:
-        return ToolResult(content="old_text was not found in the target file.", is_error=True)
+        return ToolResult.fail("old_text was not found in the target file.", code="OLD_TEXT_NOT_FOUND")
 
     if args.replace_all:
         updated = text.replace(args.old_text, args.new_text)
@@ -30,7 +30,11 @@ async def _apply_patch(args: ApplyPatchInput, ctx: ToolContext) -> ToolResult:
         replacements = 1
 
     target.write_text(updated, encoding="utf-8")
-    return ToolResult(content=f"Applied patch to {args.path} ({replacements} replacement{'s' if replacements != 1 else ''}).")
+    return ToolResult.ok(
+        f"Applied patch to {args.path} ({replacements} replacement{'s' if replacements != 1 else ''}).",
+        content=f"Applied patch to {args.path} ({replacements} replacement{'s' if replacements != 1 else ''}).",
+        data={"path": args.path, "replacements": replacements},
+    )
 
 
 apply_patch_tool = Tool(

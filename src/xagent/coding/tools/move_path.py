@@ -13,11 +13,15 @@ async def _move_path(args: MovePathInput, ctx: ToolContext) -> ToolResult:
     source = await resolve_tool_path(ctx, args.source, "write")
     destination = await resolve_tool_path(ctx, args.destination, "write")
     if not source.exists():
-        return ToolResult(content=f"Source path not found: {args.source}", is_error=True)
+        return ToolResult.fail(f"Source path not found: {args.source}", code="SOURCE_NOT_FOUND")
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     source.rename(destination)
-    return ToolResult(content=f"Moved {args.source} to {args.destination}")
+    return ToolResult.ok(
+        f"Moved {args.source} to {args.destination}.",
+        content=f"Moved {args.source} to {args.destination}",
+        data={"source": args.source, "destination": args.destination},
+    )
 
 
 move_path_tool = Tool(

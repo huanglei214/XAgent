@@ -4,7 +4,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Union
 from uuid import uuid4
 
-from xagent.foundation.runtime.paths import ensure_config_dir, get_trace_index_file, get_traces_dir
+from xagent.foundation.runtime.paths import (
+    ensure_config_dir,
+    get_trace_artifacts_dir,
+    get_trace_index_file,
+    get_traces_dir,
+)
 
 
 def classify_task_kind(prompt: str) -> str:
@@ -52,8 +57,10 @@ class TraceRecorder:
             **(tags or {}),
         }
         traces_dir = get_traces_dir(self.cwd)
+        self.artifacts_dir = get_trace_artifacts_dir(self.cwd) / self.trace_id
         ensure_config_dir(self.cwd)
         traces_dir.mkdir(parents=True, exist_ok=True)
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.path = traces_dir / f"{self.trace_id}.ndjson"
 
     def emit(
@@ -79,6 +86,15 @@ class TraceRecorder:
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
         return event_id
+
+    def write_artifact(self, name: str, payload: Any) -> Path:
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        path = self.artifacts_dir / name
+        if isinstance(payload, str):
+            path.write_text(payload, encoding="utf-8")
+            return path
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        return path
 
     def record_state_snapshot(self, agent, name: str, extra: Optional[Dict[str, Any]] = None) -> None:
         payload = {
@@ -130,6 +146,18 @@ class TraceRecorder:
                 "failure_stage": stage,
                 **({"termination_reason": termination_reason} if termination_reason else {}),
             },
+        )
+        self._update_index()
+
+    def finish_cancelled(self, reason: str, duration_seconds: float) -> None:
+        self.status = "cancelled"
+        self.error = reason
+        self.termination_reason = "aborted"
+        self.ended_at = _utc_now()
+        self.emit(
+            "task_cancelled",
+            payload={"error": reason, "duration_seconds": duration_seconds, "termination_reason": "aborted"},
+            tags={"status": self.status, "termination_reason": "aborted"},
         )
         self._update_index()
 

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 import unittest
@@ -5,8 +6,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from xagent.agent.core import Agent
-from xagent.foundation.runtime.paths import get_trace_index_file
+from xagent.agent.core import Agent, AgentAborted
+from xagent.foundation.runtime.paths import get_trace_artifacts_dir, get_trace_index_file
 from xagent.foundation.messages import Message, TextPart, ToolUsePart, message_text
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 from xagent.cli.runtime import make_external_path_approval_handler, run_agent_turn, run_agent_turn_stream
@@ -49,6 +50,15 @@ class _SuccessProvider:
 class _FailureProvider:
     async def complete(self, request):
         raise RuntimeError("provider exploded")
+
+    async def stream_text(self, request):  # pragma: no cover
+        yield ""
+
+
+class _AbortProvider:
+    async def complete(self, request):
+        await asyncio.sleep(0.2)
+        return Message(role="assistant", content=[TextPart(text="late")])
 
     async def stream_text(self, request):  # pragma: no cover
         yield ""
@@ -100,6 +110,12 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("agent_step_finished", event_types)
             self.assertIn("state_snapshot", event_types)
             self.assertIn("task_finished", event_types)
+            self.assertIn("model_request_artifact_written", event_types)
+            self.assertIn("model_response_artifact_written", event_types)
+
+            artifact_dir = get_trace_artifacts_dir(root) / agent.last_trace_recorder.trace_id
+            self.assertTrue((artifact_dir / "step-1-request.json").exists())
+            self.assertTrue((artifact_dir / "step-1-response.json").exists())
 
             index = json.loads(get_trace_index_file(root).read_text(encoding="utf-8"))
             self.assertEqual(index[-1]["status"], "success")
@@ -234,3 +250,33 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("external_path_access_requested", event_types)
         self.assertIn("external_path_access_decided", event_types)
+
+    async def test_aborted_trace_is_recorded_as_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent = Agent(
+                provider=_AbortProvider(),
+                model="ep-test",
+                system_prompt="You are XAgent",
+                tools=[],
+                cwd=str(root),
+            )
+            agent.provider_name = "ark"
+            agent.runtime_mode = "run"
+
+            task = asyncio.create_task(run_agent_turn(agent, "abort this"))
+            await asyncio.sleep(0.02)
+            agent.abort()
+
+            with self.assertRaises(AgentAborted):
+                await task
+
+            trace_path = agent.last_trace_recorder.path
+            events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+            event_types = [event["event_type"] for event in events]
+
+            index = json.loads(get_trace_index_file(root).read_text(encoding="utf-8"))
+
+        self.assertIn("task_cancelled", event_types)
+        self.assertEqual(index[-1]["status"], "cancelled")
+        self.assertEqual(index[-1]["termination_reason"], "aborted")

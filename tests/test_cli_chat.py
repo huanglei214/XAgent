@@ -5,7 +5,16 @@ from typer.testing import CliRunner
 
 from xagent.cli.main import app
 from xagent.cli.tui.commands import filter_commands, get_slash_query, insert_command
-from xagent.cli.tui.tui import SlashCommandCompleter, build_header_text, build_sidebar_text, build_transcript_text
+from xagent.cli.tui.tui import (
+    SlashCommandCompleter,
+    _ask_user_questions_via_prompt,
+    _format_runtime_block,
+    _parse_question_selection,
+    build_header_text,
+    build_sidebar_text,
+    build_transcript_text,
+)
+from xagent.coding.tools.ask_user_question import AskUserQuestionInput
 from xagent.foundation.messages import Message, TextPart, ToolResultPart, ToolUsePart
 
 
@@ -72,6 +81,22 @@ class CliChatTests(unittest.TestCase):
         self.assertIn("✓ README contents", transcript)
         self.assertIn("… running bash", transcript)
 
+    def test_build_transcript_prefers_structured_tool_summary(self) -> None:
+        messages = [
+            Message(
+                role="tool",
+                content=[
+                    ToolResultPart(
+                        tool_use_id="call_1",
+                        content='{"ok": true, "summary": "Found 2 entries under .", "data": {"entries": ["a", "b"]}}',
+                        is_error=False,
+                    )
+                ],
+            )
+        ]
+        transcript = build_transcript_text(messages, [])
+        self.assertIn("✓ Found 2 entries under .", transcript)
+
     def test_slash_query_helpers(self) -> None:
         self.assertEqual(get_slash_query("/he"), "he")
         self.assertIsNone(get_slash_query("hello"))
@@ -103,3 +128,35 @@ class CliChatTests(unittest.TestCase):
         )
         completions = list(completer.get_completions(Document("/rev"), None))
         self.assertEqual(completions[0].text, "/review-helper")
+
+    def test_format_runtime_block_renders_multiline_section(self) -> None:
+        block = _format_runtime_block("Loaded skills", ["lark-shared", "lark-im"])
+        self.assertEqual(block, "Loaded skills\n  lark-shared\n  lark-im")
+
+    def test_parse_question_selection_supports_single_and_multi(self) -> None:
+        self.assertEqual(_parse_question_selection("2", False, 3), [2])
+        self.assertEqual(_parse_question_selection("1, 3, 1", True, 3), [1, 3])
+
+    def test_ask_user_questions_via_prompt_collects_answers(self) -> None:
+        async def _prompt(_: str) -> str:
+            return "2"
+
+        params = AskUserQuestionInput.model_validate(
+            {
+                "questions": [
+                    {
+                        "question": "Choose one?",
+                        "header": "Choice",
+                        "options": [
+                            {"label": "A", "description": "First"},
+                            {"label": "B", "description": "Second"},
+                        ],
+                    }
+                ]
+            }
+        )
+
+        import asyncio
+
+        result = asyncio.run(_ask_user_questions_via_prompt(_prompt, params))
+        self.assertEqual(result.answers[0].selected_labels, ["B"])

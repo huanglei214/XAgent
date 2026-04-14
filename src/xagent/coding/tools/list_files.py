@@ -15,9 +15,9 @@ class ListFilesInput(BaseModel):
 async def _list_files(args: ListFilesInput, ctx: ToolContext) -> ToolResult:
     target = await resolve_tool_path(ctx, args.path, "read")
     if not target.exists():
-        return ToolResult(content=f"Path not found: {args.path}", is_error=True)
+        return ToolResult.fail(f"Path not found: {args.path}", code="PATH_NOT_FOUND")
     if not target.is_dir():
-        return ToolResult(content=f"Path is not a directory: {args.path}", is_error=True)
+        return ToolResult.fail(f"Path is not a directory: {args.path}", code="PATH_NOT_DIRECTORY")
 
     root = Path(ctx.cwd).resolve()
     iterator = target.rglob("*") if args.recursive else target.iterdir()
@@ -31,8 +31,17 @@ async def _list_files(args: ListFilesInput, ctx: ToolContext) -> ToolResult:
             break
 
     if not entries:
-        return ToolResult(content=f"No files found under {args.path}")
-    return ToolResult(content="\n".join(sorted(entries)))
+        return ToolResult.ok(
+            f"No files found under {args.path}.",
+            content=f"No files found under {args.path}",
+            data={"entries": [], "truncated": False},
+        )
+    sorted_entries = sorted(entries)
+    return ToolResult.ok(
+        f"Found {len(sorted_entries)} entries under {args.path}.",
+        content="\n".join(sorted_entries),
+        data={"entries": sorted_entries, "truncated": len(sorted_entries) >= args.max_entries},
+    )
 
 
 list_files_tool = Tool(

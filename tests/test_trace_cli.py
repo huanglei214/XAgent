@@ -32,6 +32,12 @@ class TraceCliTests(unittest.TestCase):
                 {"tool_name": "read_file", "decision": "allow_scope"},
                 tags={"tool_name": "read_file"},
             )
+            artifact = recorder.write_artifact("step-1-request.json", {"hello": "world"})
+            recorder.emit(
+                "model_request_artifact_written",
+                {"artifact_path": str(artifact), "model_call_index": 1},
+                tags={"status": "written", "step": 1},
+            )
             recorder.finish_success(output_text="done", duration_seconds=0.1)
 
             latest = runner.invoke(app, ["trace", "latest"])
@@ -43,6 +49,8 @@ class TraceCliTests(unittest.TestCase):
         self.assertEqual(shown.exit_code, 0)
         self.assertIn("Trace Events", shown.output)
         self.assertIn("Trace Stats", shown.output)
+        self.assertIn("Trace Artifacts", shown.output)
+        self.assertIn("model_request_artifact_written", shown.output)
         self.assertIn("read_file: started=1 success=1 error=0", shown.output)
         self.assertIn("Approvals: allow_scope=1", shown.output)
         self.assertIn("task_started", shown.output)

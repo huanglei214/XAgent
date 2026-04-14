@@ -18,13 +18,13 @@ async def _grep_search(args: GrepSearchInput, ctx: ToolContext) -> ToolResult:
     root = Path(ctx.cwd).resolve()
     target = await resolve_tool_path(ctx, args.path, "read")
     if not target.exists():
-        return ToolResult(content=f"Path not found: {args.path}", is_error=True)
+        return ToolResult.fail(f"Path not found: {args.path}", code="PATH_NOT_FOUND")
 
     flags = 0 if args.case_sensitive else re.IGNORECASE
     try:
         pattern = re.compile(args.pattern, flags)
     except re.error as exc:
-        return ToolResult(content=f"Invalid regex pattern: {exc}", is_error=True)
+        return ToolResult.fail(f"Invalid regex pattern: {exc}", code="INVALID_REGEX")
 
     files = [target] if target.is_file() else [item for item in target.rglob("*") if item.is_file()]
     matches = []
@@ -40,11 +40,23 @@ async def _grep_search(args: GrepSearchInput, ctx: ToolContext) -> ToolResult:
                 rel = file_path.resolve().relative_to(root).as_posix()
                 matches.append(f"{rel}:{line_number}: {line}")
                 if len(matches) >= args.limit:
-                    return ToolResult(content="\n".join(matches))
+                    return ToolResult.ok(
+                        f"Found {len(matches)} matches for pattern '{args.pattern}'.",
+                        content="\n".join(matches),
+                        data={"matches": matches, "truncated": True},
+                    )
 
     if not matches:
-        return ToolResult(content=f"No matches for pattern '{args.pattern}' under {args.path}")
-    return ToolResult(content="\n".join(matches))
+        return ToolResult.ok(
+            f"No matches for pattern '{args.pattern}' under {args.path}.",
+            content=f"No matches for pattern '{args.pattern}' under {args.path}",
+            data={"matches": [], "truncated": False},
+        )
+    return ToolResult.ok(
+        f"Found {len(matches)} matches for pattern '{args.pattern}'.",
+        content="\n".join(matches),
+        data={"matches": matches, "truncated": False},
+    )
 
 
 grep_search_tool = Tool(

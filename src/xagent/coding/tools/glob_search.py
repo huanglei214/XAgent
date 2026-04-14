@@ -16,7 +16,7 @@ async def _glob_search(args: GlobSearchInput, ctx: ToolContext) -> ToolResult:
     root = Path(ctx.cwd).resolve()
     target = await resolve_tool_path(ctx, args.path, "read")
     if not target.exists():
-        return ToolResult(content=f"Path not found: {args.path}", is_error=True)
+        return ToolResult.fail(f"Path not found: {args.path}", code="PATH_NOT_FOUND")
 
     matches = []
     for item in target.glob(args.pattern):
@@ -25,8 +25,16 @@ async def _glob_search(args: GlobSearchInput, ctx: ToolContext) -> ToolResult:
             break
 
     if not matches:
-        return ToolResult(content=f"No matches for pattern '{args.pattern}' under {args.path}")
-    return ToolResult(content="\n".join(matches))
+        return ToolResult.ok(
+            f"No matches for pattern '{args.pattern}' under {args.path}.",
+            content=f"No matches for pattern '{args.pattern}' under {args.path}",
+            data={"matches": [], "truncated": False},
+        )
+    return ToolResult.ok(
+        f"Found {len(matches)} path(s) for pattern '{args.pattern}'.",
+        content="\n".join(matches),
+        data={"matches": matches, "truncated": len(matches) >= args.limit},
+    )
 
 
 glob_search_tool = Tool(

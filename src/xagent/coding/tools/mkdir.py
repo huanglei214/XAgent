@@ -11,7 +11,11 @@ class MkdirInput(BaseModel):
 async def _mkdir(args: MkdirInput, ctx: ToolContext) -> ToolResult:
     target = await resolve_tool_path(ctx, args.path, "write")
     target.mkdir(parents=True, exist_ok=True)
-    return ToolResult(content=f"Created directory {args.path}")
+    return ToolResult.ok(
+        f"Created directory {args.path}.",
+        content=f"Created directory {args.path}",
+        data={"path": args.path, "absolute_path": str(target)},
+    )
 
 
 mkdir_tool = Tool(

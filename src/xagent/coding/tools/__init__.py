@@ -1,3 +1,4 @@
+from xagent.coding.tools.ask_user_question import create_ask_user_question_tool
 from xagent.coding.tools.apply_patch import apply_patch_tool
 from xagent.coding.tools.bash import bash_tool
 from xagent.coding.tools.file_info import file_info_tool
@@ -31,6 +32,7 @@ ALL_CODING_TOOLS = [
 __all__ = [
     "ALL_CODING_TOOLS",
     "READ_ONLY_TOOLS",
+    "create_ask_user_question_tool",
     "apply_patch_tool",
     "bash_tool",
     "file_info_tool",
