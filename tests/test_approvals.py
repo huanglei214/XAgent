@@ -81,6 +81,83 @@ class ApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         self.assertTrue(store.is_allowed("bash"))
 
+    async def test_scoped_bash_approval_matches_same_command_prefix_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ApprovalStore(root)
+            tool_use = ToolUsePart(id="call_1", name="bash", input={"command": "git status --short"})
+            store.allow_scoped_tool_use(tool_use, cwd=root)
+
+            reloaded = ApprovalStore(root)
+
+        self.assertTrue(reloaded.is_allowed_tool_use(ToolUsePart(id="x", name="bash", input={"command": "git status"}), cwd=root))
+        self.assertFalse(reloaded.is_allowed_tool_use(ToolUsePart(id="x", name="bash", input={"command": "git add ."}), cwd=root))
+
+    async def test_scoped_path_approval_matches_same_prefix_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ApprovalStore(root)
+            tool_use = ToolUsePart(id="call_1", name="write_file", input={"path": "src/app.py", "content": "x"})
+            store.allow_scoped_tool_use(tool_use, cwd=root)
+
+            reloaded = ApprovalStore(root)
+
+        self.assertTrue(
+            reloaded.is_allowed_tool_use(
+                ToolUsePart(id="x", name="write_file", input={"path": "src/app.py", "content": "y"}),
+                cwd=root,
+            )
+        )
+        self.assertFalse(
+            reloaded.is_allowed_tool_use(
+                ToolUsePart(id="x", name="write_file", input={"path": "README.md", "content": "y"}),
+                cwd=root,
+            )
+        )
+
+    async def test_scoped_rule_expires(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ApprovalStore(root)
+            tool_use = ToolUsePart(id="call_1", name="bash", input={"command": "git status"})
+            store.allow_scoped_tool_use(tool_use, cwd=root, ttl_seconds=-1)
+
+            reloaded = ApprovalStore(root)
+
+        self.assertFalse(reloaded.is_allowed_tool_use(tool_use, cwd=root))
+
+    async def test_make_approval_handler_accepts_async_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ApprovalStore(root)
+
+            async def _prompt(_: str) -> str:
+                return "a"
+
+            middleware = ApprovalMiddleware(store, prompt_fn=_prompt)
+            tool_use = ToolUsePart(id="call_1", name="bash", input={"command": "pwd"})
+
+            result = await middleware.before_tool(agent=type("AgentStub", (), {"trace_recorder": None})(), tool_use=tool_use)
+
+        self.assertIsNone(result)
+        self.assertTrue(store.is_allowed("bash"))
+
+    async def test_make_approval_handler_persists_scoped_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ApprovalStore(root)
+            middleware = ApprovalMiddleware(store, prompt_fn=lambda prompt: "s")
+            tool_use = ToolUsePart(id="call_1", name="bash", input={"command": "git status --short"})
+
+            result = await middleware.before_tool(agent=type("AgentStub", (), {"trace_recorder": None, "cwd": str(root)})(), tool_use=tool_use)
+
+            reloaded = ApprovalStore(root)
+
+        self.assertIsNone(result)
+        self.assertFalse(reloaded.is_allowed("bash"))
+        self.assertTrue(reloaded.is_allowed_tool_use(ToolUsePart(id="x", name="bash", input={"command": "git status"}), cwd=root))
+        self.assertFalse(reloaded.is_allowed_tool_use(ToolUsePart(id="x", name="bash", input={"command": "git add ."}), cwd=root))
+
     async def test_make_approval_handler_skips_prompt_for_persisted_tool(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -92,6 +169,26 @@ class ApprovalTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(middleware, "prompt_fn") as prompt:
                 result = await middleware.before_tool(
                     agent=type("AgentStub", (), {"trace_recorder": None})(),
+                    tool_use=tool_use,
+                )
+
+        self.assertIsNone(result)
+        prompt.assert_not_called()
+
+    async def test_make_approval_handler_skips_prompt_for_matching_scoped_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ApprovalStore(root)
+            store.allow_scoped_tool_use(
+                ToolUsePart(id="call_1", name="write_file", input={"path": "src/app.py", "content": "x"}),
+                cwd=root,
+            )
+            middleware = ApprovalMiddleware(store, prompt_fn=lambda prompt: "n")
+            tool_use = ToolUsePart(id="call_2", name="write_file", input={"path": "src/app.py", "content": "y"})
+
+            with patch.object(middleware, "prompt_fn") as prompt:
+                result = await middleware.before_tool(
+                    agent=type("AgentStub", (), {"trace_recorder": None, "cwd": str(root)})(),
                     tool_use=tool_use,
                 )
 

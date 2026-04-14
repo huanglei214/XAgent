@@ -43,6 +43,7 @@ class TraceRecorder:
         self.ended_at: Optional[str] = None
         self.status = "running"
         self.error: Optional[str] = None
+        self.termination_reason: Optional[str] = None
         self.base_tags = {
             "mode": mode,
             "provider": provider,
@@ -90,24 +91,45 @@ class TraceRecorder:
             payload.update(extra)
         self.emit("state_snapshot", payload=payload)
 
-    def finish_success(self, output_text: str, duration_seconds: float) -> None:
+    def finish_success(self, output_text: str, duration_seconds: float, termination_reason: str = "completed") -> None:
         self.status = "success"
+        self.termination_reason = termination_reason
         self.ended_at = _utc_now()
         self.emit(
             "task_finished",
-            payload={"output_text": output_text, "duration_seconds": duration_seconds},
-            tags={"status": self.status},
+            payload={
+                "output_text": output_text,
+                "duration_seconds": duration_seconds,
+                "termination_reason": termination_reason,
+            },
+            tags={"status": self.status, "termination_reason": termination_reason},
         )
         self._update_index(output_text=output_text)
 
-    def finish_failure(self, error: str, stage: str, duration_seconds: float) -> None:
+    def finish_failure(
+        self,
+        error: str,
+        stage: str,
+        duration_seconds: float,
+        termination_reason: Optional[str] = None,
+    ) -> None:
         self.status = "failed"
         self.error = error
+        self.termination_reason = termination_reason
         self.ended_at = _utc_now()
         self.emit(
             "task_failed",
-            payload={"error": error, "failure_stage": stage, "duration_seconds": duration_seconds},
-            tags={"status": self.status, "failure_stage": stage},
+            payload={
+                "error": error,
+                "failure_stage": stage,
+                "duration_seconds": duration_seconds,
+                "termination_reason": termination_reason,
+            },
+            tags={
+                "status": self.status,
+                "failure_stage": stage,
+                **({"termination_reason": termination_reason} if termination_reason else {}),
+            },
         )
         self._update_index()
 
@@ -134,6 +156,7 @@ class TraceRecorder:
             "ended_at": self.ended_at,
             "trace_file": str(self.path),
             "error": self.error,
+            "termination_reason": self.termination_reason,
             "output_preview": (output_text or "")[:400],
             "tags": self.base_tags,
         }

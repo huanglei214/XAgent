@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
+import json
+from time import perf_counter
 from typing import Awaitable, Callable, Optional
 
 from xagent.agent.core.middleware import AgentMiddleware
@@ -19,6 +22,9 @@ class Agent:
         middlewares: Optional[list[AgentMiddleware]] = None,
         cwd: str = ".",
         max_steps: int = 8,
+        max_duration_seconds: Optional[float] = 300.0,
+        max_consecutive_errors: int = 3,
+        max_repeated_tool_calls: int = 3,
         approval_handler: Optional[Callable[[ToolUsePart], Awaitable[bool] | bool]] = None,
     ) -> None:
         self.provider = provider
@@ -28,16 +34,27 @@ class Agent:
         self.middlewares = middlewares or []
         self.cwd = cwd
         self.max_steps = max_steps
+        self.max_duration_seconds = max_duration_seconds
+        self.max_consecutive_errors = max_consecutive_errors
+        self.max_repeated_tool_calls = max_repeated_tool_calls
         self.approval_handler = approval_handler
         self.messages: list[Message] = []
         self.trace_recorder = None
         self.last_error_stage = None
+        self.last_termination_reason: Optional[str] = None
+        self.requested_skill_name: Optional[str] = None
+        self.skills = []
+        self.allowed_external_paths: set[str] = set()
+        self.request_path_access: Optional[Callable[[str, str], Awaitable[bool] | bool]] = None
 
     def clear_messages(self) -> None:
         self.messages.clear()
 
     def set_messages(self, messages: list[Message]) -> None:
         self.messages = list(messages)
+
+    def set_requested_skill_name(self, requested_skill_name: Optional[str]) -> None:
+        self.requested_skill_name = requested_skill_name
 
     async def run(
         self,
@@ -46,10 +63,18 @@ class Agent:
         on_tool_result: Optional[Callable[[ToolUsePart, ToolResultPart], None]] = None,
         on_assistant_delta: Optional[Callable[[Message], None]] = None,
     ) -> Message:
+        self.last_error_stage = None
+        self.last_termination_reason = None
+        started_at = perf_counter()
+        consecutive_error_count = 0
+        repeated_tool_call_count = 0
+        last_tool_signature: Optional[str] = None
+
         self.messages.append(Message(role="user", content=[TextPart(text=user_text)]))
         await self._before_agent_run(user_text)
 
         for step in range(1, self.max_steps + 1):
+            self._ensure_within_budget(started_at)
             await self._before_agent_step(step)
             request = ModelRequest(
                 model=self.model,
@@ -59,28 +84,46 @@ class Agent:
             request = await self._before_model(request)
             try:
                 if on_assistant_delta and hasattr(self.provider, "stream_complete"):
-                    latest: Optional[Message] = None
-                    async for snapshot in self.provider.stream_complete(request):
-                        latest = snapshot
-                        on_assistant_delta(snapshot)
-                    if latest is None:
-                        raise RuntimeError("Model stream ended without producing a message")
-                    assistant_message = latest
+                    assistant_message = await self._run_streaming_model(request, on_assistant_delta, started_at)
                 else:
-                    assistant_message = await self.provider.complete(request)
+                    assistant_message = await self._await_with_budget(
+                        self.provider.complete(request),
+                        started_at=started_at,
+                        timeout_message="Agent stopped: run timed out while waiting for model response.",
+                    )
             except Exception:
-                self.last_error_stage = "model"
+                if self.last_termination_reason is None:
+                    self.last_termination_reason = "model_error"
+                if self.last_error_stage is None:
+                    self.last_error_stage = "model"
                 raise
             await self._after_model(assistant_message)
             self.messages.append(assistant_message)
 
             tool_uses = [part for part in assistant_message.content if isinstance(part, ToolUsePart)]
             if not tool_uses:
+                self.last_termination_reason = "completed"
                 await self._after_agent_step(step)
                 await self._after_agent_run(assistant_message)
                 return assistant_message
 
             for tool_use in tool_uses:
+                self._ensure_within_budget(started_at)
+                tool_signature = json.dumps(
+                    {"name": tool_use.name, "input": tool_use.input},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if tool_signature == last_tool_signature:
+                    repeated_tool_call_count += 1
+                else:
+                    last_tool_signature = tool_signature
+                    repeated_tool_call_count = 1
+                if self.max_repeated_tool_calls > 0 and repeated_tool_call_count > self.max_repeated_tool_calls:
+                    self.last_error_stage = "agent"
+                    self.last_termination_reason = "repeated_tool_call"
+                    raise RuntimeError("Agent stopped: repeated tool loop detected.")
+
                 if on_tool_use:
                     on_tool_use(tool_use)
                 middleware_result = await self._before_tool(tool_use)
@@ -102,7 +145,18 @@ class Agent:
                         )
                     else:
                         try:
-                            tool_result = await tool.invoke(tool_use.input, ToolContext(cwd=self.cwd))
+                            tool_result = await self._await_with_budget(
+                                tool.invoke(
+                                    tool_use.input,
+                                    ToolContext(
+                                        cwd=self.cwd,
+                                        request_path_access=self.request_path_access,
+                                        allowed_external_paths=self.allowed_external_paths,
+                                    ),
+                                ),
+                                started_at=started_at,
+                                timeout_message=f"Agent stopped: run timed out while waiting for tool '{tool_use.name}'.",
+                            )
                             result = ToolResultPart(
                                 tool_use_id=tool_use.id,
                                 content=tool_result.content,
@@ -119,11 +173,76 @@ class Agent:
                 self.messages.append(Message(role="tool", content=[result]))
                 if on_tool_result:
                     on_tool_result(tool_use, result)
+                if result.is_error:
+                    consecutive_error_count += 1
+                    if self.max_consecutive_errors > 0 and consecutive_error_count >= self.max_consecutive_errors:
+                        self.last_error_stage = "agent"
+                        self.last_termination_reason = "consecutive_tool_errors"
+                        raise RuntimeError("Agent stopped: too many consecutive tool errors.")
+                else:
+                    consecutive_error_count = 0
 
             await self._after_agent_step(step)
 
         self.last_error_stage = "agent"
+        self.last_termination_reason = "max_steps"
         raise RuntimeError("Maximum number of agent steps reached.")
+
+    async def _run_streaming_model(
+        self,
+        request: ModelRequest,
+        on_assistant_delta: Callable[[Message], None],
+        started_at: float,
+    ) -> Message:
+        async def _consume() -> Message:
+            latest: Optional[Message] = None
+            async for snapshot in self.provider.stream_complete(request):
+                latest = snapshot
+                on_assistant_delta(snapshot)
+            if latest is None:
+                raise RuntimeError("Model stream ended without producing a message")
+            return latest
+
+        return await self._await_with_budget(
+            _consume(),
+            started_at=started_at,
+            timeout_message="Agent stopped: run timed out while waiting for model response.",
+        )
+
+    async def _await_with_budget(
+        self,
+        awaitable,
+        *,
+        started_at: float,
+        timeout_message: str,
+    ):
+        remaining = self._remaining_duration(started_at)
+        if remaining is None:
+            return await awaitable
+        if remaining <= 0:
+            self.last_error_stage = "agent"
+            self.last_termination_reason = "timeout"
+            raise RuntimeError(timeout_message)
+        try:
+            return await asyncio.wait_for(awaitable, timeout=remaining)
+        except asyncio.TimeoutError as exc:
+            self.last_error_stage = "agent"
+            self.last_termination_reason = "timeout"
+            raise RuntimeError(timeout_message) from exc
+
+    def _ensure_within_budget(self, started_at: float) -> None:
+        remaining = self._remaining_duration(started_at)
+        if remaining is None:
+            return
+        if remaining <= 0:
+            self.last_error_stage = "agent"
+            self.last_termination_reason = "timeout"
+            raise RuntimeError("Agent stopped: run timed out.")
+
+    def _remaining_duration(self, started_at: float) -> Optional[float]:
+        if self.max_duration_seconds is None:
+            return None
+        return self.max_duration_seconds - (perf_counter() - started_at)
 
     async def _before_agent_run(self, user_text: str) -> None:
         for middleware in self.middlewares:

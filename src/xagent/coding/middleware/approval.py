@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import inspect
 import json
 from typing import Callable
 
 import typer
 
 from xagent.agent.core.middleware import AgentMiddleware
-from xagent.coding.permissions.store import ApprovalStore, requires_approval
+from xagent.coding.permissions.store import ApprovalStore, describe_scoped_rule, requires_approval
 from xagent.foundation.messages import ToolResultPart, ToolUsePart
 
 
@@ -18,7 +19,8 @@ class ApprovalMiddleware(AgentMiddleware):
     async def before_tool(self, *, agent, tool_use: ToolUsePart) -> ToolResultPart | None:
         if not requires_approval(tool_use.name):
             return None
-        if self.approval_store.is_allowed(tool_use.name):
+        cwd = getattr(agent, "cwd", ".")
+        if self.approval_store.is_allowed_tool_use(tool_use, cwd=cwd):
             return None
 
         recorder = getattr(agent, "trace_recorder", None)
@@ -29,15 +31,25 @@ class ApprovalMiddleware(AgentMiddleware):
                 tags={"tool_name": tool_use.name},
             )
 
+        scope_description = describe_scoped_rule(tool_use, cwd=cwd)
         prompt = (
             f"Allow {tool_use.name} with input {json.dumps(tool_use.input, ensure_ascii=False)}? "
-            "[y]es/[n]o/[a]lways"
+            f"[y]es once/[n]o/[s]cope 7d ({scope_description})/[a]llways tool"
         )
 
         while True:
-            decision = self.prompt_fn(prompt).strip().lower()
+            decision = self.prompt_fn(prompt)
+            if inspect.isawaitable(decision):
+                decision = await decision
+            decision = str(decision).strip().lower()
             if decision in {"y", "yes"}:
                 _record_approval_feedback(recorder, tool_use.name, "allow_once")
+                return None
+            if decision in {"s", "scope"}:
+                rule = self.approval_store.allow_scoped_tool_use(tool_use, cwd=cwd)
+                _record_approval_feedback(recorder, tool_use.name, "allow_scope")
+                if rule is None:
+                    return None
                 return None
             if decision in {"a", "always"}:
                 self.approval_store.allow_tool(tool_use.name)

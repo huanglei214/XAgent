@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from xagent.coding.workspace import resolve_workspace_path
+from xagent.coding.workspace import resolve_tool_path
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 
 
@@ -10,7 +10,7 @@ class WriteFileInput(BaseModel):
 
 
 async def _write_file(args: WriteFileInput, ctx: ToolContext) -> ToolResult:
-    target = resolve_workspace_path(ctx.cwd, args.path)
+    target = await resolve_tool_path(ctx, args.path, "write")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(args.content, encoding="utf-8")
     return ToolResult(content=f"Wrote {args.path}")

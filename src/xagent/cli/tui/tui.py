@@ -1,27 +1,32 @@
 import asyncio
 import json
 import os
-import sys
 import shutil
+from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.text import Text
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application.current import get_app_or_none
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
 from xagent.agent.session import SessionStore
-from xagent.cli.runtime import (
+from xagent.cli.runtime.runtime import (
     build_runtime_agent,
     format_runtime_error,
     get_runtime_status,
+    make_external_path_approval_handler,
     run_agent_turn_stream,
 )
+from xagent.cli.tui.commands import BUILTIN_COMMANDS
+from xagent.coding.middleware import ApprovalMiddleware
 from xagent.foundation.messages import Message, ToolResultPart, ToolUsePart, message_text
 
 
@@ -218,10 +223,8 @@ def _print_user_message(text: str) -> None:
 
 def _print_assistant_text(text: str) -> None:
     """打印助手最终文本。"""
-    line = Text()
-    line.append("● ", style="bold blue")
-    line.append(text)
-    console.print(line)
+    console.print(Text("● ", style="bold blue"), end="")
+    console.print(Markdown(text))
     console.print()
 
 
@@ -267,9 +270,11 @@ def _get_terminal_width() -> int:
     return max(40, shutil.get_terminal_size(fallback=(80, 24)).columns)
 
 
-def _build_input_panel_prompt(width: int) -> FormattedText:
+def _build_input_panel_prompt(width: int, streaming: bool = False) -> FormattedText:
     """构建输入行的 prompt（带顶部边框）。"""
     top = "─" * width
+    if streaming:
+        return FormattedText([("class:border", f"{top}\n"), ("class:prompt", "❯ Input anything to continue. Launch a new command or skill by typing `/`")])
     return FormattedText([("class:border", f"{top}\n"), ("class:prompt", "❯ ")])
 
 
@@ -317,14 +322,23 @@ async def run_tui(cwd: str) -> None:
     agent.runtime_mode = "chat"
 
     session_store = SessionStore(cwd)
-    session_id, restored_messages = session_store.load_state()
+    session_id, restored_messages, restore_metadata = session_store.load_state_with_metadata()
     agent.trace_session_id = session_id
     if restored_messages:
         agent.set_messages(restored_messages)
-        console.print(
-            f"[italic dim]Restored {len(restored_messages)} messages from the previous session.[/italic dim]"
-        )
+        if restore_metadata.has_checkpoint:
+            console.print(
+                "[italic dim]"
+                f"Restored checkpoint ({restore_metadata.checkpointed_message_count} compacted messages) "
+                f"+ {restore_metadata.recent_message_count} recent messages from the previous session."
+                "[/italic dim]"
+            )
+        else:
+            console.print(
+                f"[italic dim]Restored {len(restored_messages)} messages from the previous session.[/italic dim]"
+            )
         console.print()
+    command_sources = [*BUILTIN_COMMANDS, *[skill.__dict__ for skill in getattr(agent, "skills", [])]]
 
     _print_header(agent)
 
@@ -336,19 +350,26 @@ async def run_tui(cwd: str) -> None:
     ui_state = {
         "streaming": False,
         "streaming_hint": "",
+        "thinking_active": False,
+        "thinking_frame": 0,
+        "thinking_label": "Thinking",
+        "streaming_text": "",
     }
 
     style = Style.from_dict(
         {
-            # 终端历史输出保持透明（继承终端主题），输入区也透明
             "": "",
             "border": "fg:#6c6c6c",
             "prompt": "fg:#ffffff bold",
             "status": "fg:#a0a0a0",
-            # 覆盖 prompt_toolkit 的默认底栏样式，防止自带反色(reverse)或灰色背景
             "bottom-toolbar": "noreverse bg:default fg:default",
             "bottom-toolbar.text": "noreverse bg:default fg:default",
-            "thinking": "fg:#a0a0a0 bg:#2b2b2b",  # Thinking 条有灰色背景
+            "spinner": "fg:#00afff bold",
+            "glow0": "fg:#ffffff bold",
+            "glow1": "fg:#5fd7ff bold",
+            "glow2": "fg:#005f87",
+            "assistant_dot": "fg:#005f87 bold",
+            "streaming_text": "fg:default",
         }
     )
 
@@ -356,22 +377,66 @@ async def run_tui(cwd: str) -> None:
 
     @kb.add("enter")
     def _on_enter(event) -> None:
-        # 流式输出期间不允许提交（但允许继续编辑）。
         if ui_state["streaming"]:
             return
         event.current_buffer.validate_and_handle()
 
-    session = PromptSession(key_bindings=kb, style=style, erase_when_done=True)
+    session = PromptSession(
+        key_bindings=kb,
+        style=style,
+        erase_when_done=True,
+        completer=SlashCommandCompleter(command_sources),
+        complete_while_typing=True,
+    )
+    prompt_task: Optional[asyncio.Task[str]] = None
 
     def _invalidate_prompt() -> None:
         app = get_app_or_none()
         if app is not None:
             app.invalidate()
 
+    def _get_prompt_message():
+        width = _get_terminal_width()
+        top = "─" * width
+        parts = []
+        
+        if ui_state["thinking_active"]:
+            frame = ui_state["thinking_frame"]
+            label = ui_state["thinking_label"]
+            
+            spinner_frames = ["·", "✢", "✳", "✶", "✻", "✽"]
+            spinner = spinner_frames[(frame // 2) % len(spinner_frames)]
+            text_len = len(label)
+            glow_pos = (frame // 2) % (text_len + 5)
+            
+            parts.append(("class:spinner", f"{spinner} "))
+            for i, char in enumerate(label):
+                dist = abs(i - glow_pos)
+                if dist == 0:
+                    parts.append(("class:glow0", char))
+                elif dist == 1:
+                    parts.append(("class:glow1", char))
+                else:
+                    parts.append(("class:glow2", char))
+            parts.append(("", "\n"))
+            
+        if ui_state["streaming_text"]:
+            parts.append(("class:assistant_dot", "● "))
+            parts.append(("class:streaming_text", ui_state["streaming_text"]))
+            parts.append(("", "\n"))
+            
+        parts.append(("class:border", f"{top}\n"))
+        if ui_state["streaming"]:
+            parts.append(("class:prompt", "❯ Input anything to continue. Launch a new command or skill by typing `/`"))
+        else:
+            parts.append(("class:prompt", "❯ "))
+            
+        return FormattedText(parts)
+
     async def _prompt_once() -> str:
         width = _get_terminal_width()
-        prompt = lambda: _build_input_panel_prompt(width)  # noqa: E731
-        bottom_toolbar = lambda: _build_input_panel_bottom_toolbar(  # noqa: E731
+        bottom_toolbar = partial(
+            _build_input_panel_bottom_toolbar,
             width=width,
             model=model,
             cwd=cwd_path,
@@ -379,11 +444,63 @@ async def run_tui(cwd: str) -> None:
         )
         return (
             await session.prompt_async(
-                message=prompt,
+                message=_get_prompt_message,
                 rprompt=_build_input_panel_rprompt,
                 bottom_toolbar=bottom_toolbar,
             )
         ).strip()
+
+    async def _cancel_live_prompt() -> None:
+        nonlocal prompt_task
+        if prompt_task is None or prompt_task.done():
+            return
+        prompt_task.cancel()
+        try:
+            await prompt_task
+        except asyncio.CancelledError:
+            pass
+        prompt_task = None
+
+    async def _prompt_modal(label: str) -> str:
+        nonlocal prompt_task
+        was_streaming = ui_state["streaming"]
+        await _cancel_live_prompt()
+
+        if ui_state["streaming_text"]:
+            _print_assistant_text(ui_state["streaming_text"])
+            ui_state["streaming_text"] = ""
+        ui_state["thinking_active"] = False
+        ui_state["streaming"] = False
+        _invalidate_prompt()
+
+        try:
+            return (
+                await session.prompt_async(
+                    message=lambda: FormattedText(
+                        [
+                            ("class:border", f"{'─' * _get_terminal_width()}\n"),
+                            ("class:prompt", f"? {label} "),
+                        ]
+                    ),
+                )
+            ).strip()
+        finally:
+            if was_streaming:
+                ui_state["streaming"] = True
+                prompt_task = asyncio.create_task(_prompt_once())
+            _invalidate_prompt()
+
+    async def _prompt_path_access(prompt: str) -> bool:
+        decision = await _prompt_modal(prompt)
+        return decision.strip().lower() in {"y", "yes"}
+
+    agent.request_path_access = make_external_path_approval_handler(
+        prompt_fn=_prompt_path_access,
+        recorder_getter=lambda: getattr(agent, "trace_recorder", None),
+    )
+    for middleware in getattr(agent, "middlewares", []):
+        if isinstance(middleware, ApprovalMiddleware):
+            middleware.prompt_fn = _prompt_modal
 
     with patch_stdout(raw=True):
         prompt_task = asyncio.create_task(_prompt_once())
@@ -403,6 +520,11 @@ async def run_tui(cwd: str) -> None:
             if text == "/help":
                 _print_user_message(text)
                 console.print("[dim]Commands: /help, /clear, /status, /exit[/dim]")
+                skills = getattr(agent, "skills", [])
+                if skills:
+                    console.print("[dim]Skills:[/dim]")
+                    for skill in skills:
+                        console.print(f"[dim]  /{skill.name} — {skill.description}[/dim]")
                 console.print()
                 prompt_task = asyncio.create_task(_prompt_once())
                 continue
@@ -424,59 +546,64 @@ async def run_tui(cwd: str) -> None:
                 prompt_task = asyncio.create_task(_prompt_once())
                 continue
 
+            requested_skill_name = None
+            if text.startswith("/"):
+                token = text[1:].split(" ", 1)[0]
+                skills = getattr(agent, "skills", [])
+                if any(skill.name.lower() == token.lower() for skill in skills):
+                    requested_skill_name = token
+                    text = text.split(" ", 1)[1].strip() if " " in text else ""
+                    if not text:
+                        console.print(f"[dim]Selected skill /{token}. Continue typing your request after the command.[/dim]")
+                        console.print()
+                        prompt_task = asyncio.create_task(_prompt_once())
+                        continue
+
             _print_user_message(text)
 
-            streaming_text = ""
-            assistant_line_open = False
+            ui_state["streaming"] = True
+            
+            # 重新启动带 "Input anything..." 提示的 prompt
+            prompt_task = asyncio.create_task(_prompt_once())
 
             try:
-                # 在流式输出期间，我们直接打印内容，不再使用任何框架劫持 stdout
-                # 这样可以保证打字效果 100% 原生和自然，不会吞字或截断。
+                agent.set_requested_skill_name(requested_skill_name)
+
+                # 初始显示炫酷的扫光动画
+                ui_state["thinking_active"] = True
+                ui_state["thinking_frame"] = 0
+                ui_state["thinking_label"] = "Almost there..."
+                ui_state["streaming_text"] = ""
                 
-                # 初始显示 Thinking 提示
-                sys.stdout.write("\n\033[90m* Thinking...\033[0m\n")
-                sys.stdout.flush()
-                
-                thinking_shown = True
+                # 独立任务用于更新动画
+                async def animate_thinking():
+                    while ui_state["thinking_active"]:
+                        ui_state["thinking_frame"] += 1
+                        _invalidate_prompt()
+                        await asyncio.sleep(0.08)
+
+                asyncio.create_task(animate_thinking())
 
                 def _clear_thinking() -> None:
-                    nonlocal thinking_shown
-                    if thinking_shown:
-                        # 上移两行并清除（清除 \n 和 Thinking... 及其后的内容）
-                        sys.stdout.write("\033[2A\033[J")
-                        sys.stdout.flush()
-                        thinking_shown = False
+                    if ui_state["thinking_active"]:
+                        ui_state["thinking_active"] = False
+                        _invalidate_prompt()
 
                 def _on_delta(snapshot: Message) -> None:
-                    nonlocal streaming_text, assistant_line_open
                     new_text = message_text(snapshot)
                     if not new_text.strip():
                         return
-                    delta = (
-                        new_text[len(streaming_text) :]
-                        if new_text.startswith(streaming_text)
-                        else new_text
-                    )
-                    streaming_text = new_text
-                    if not delta:
-                        return
-                    
+                    ui_state["streaming_text"] = new_text
                     _clear_thinking()
-                    
-                    if not assistant_line_open:
-                        # 蓝色的圆点
-                        sys.stdout.write("\033[1;34m● \033[0m")
-                        assistant_line_open = True
-                    sys.stdout.write(delta)
-                    sys.stdout.flush()
+                    _invalidate_prompt()
 
                 def _on_tool_use(tool_use: ToolUsePart) -> None:
-                    nonlocal streaming_text, assistant_line_open
                     _clear_thinking()
-                    
-                    if assistant_line_open:
-                        sys.stdout.write("\n\n")
-                        assistant_line_open = False
+                    # If we had streaming text, print it to stdout to keep it before tool output
+                    if ui_state["streaming_text"]:
+                        _print_assistant_text(ui_state["streaming_text"])
+                        ui_state["streaming_text"] = ""
+                        _invalidate_prompt()
                     
                     # 打印工具调用
                     line = Text()
@@ -494,7 +621,7 @@ async def run_tui(cwd: str) -> None:
                     line.append(truncated, style=style)
                     console.print(line)
 
-                _, duration = await run_agent_turn_stream(
+                final_message, duration = await run_agent_turn_stream(
                     agent,
                     text,
                     on_assistant_delta=_on_delta,
@@ -504,8 +631,13 @@ async def run_tui(cwd: str) -> None:
 
                 _clear_thinking()
 
-                if assistant_line_open:
-                    console.print()
+                if ui_state["streaming_text"]:
+                    # Print the final streaming text with rich so markdown is parsed
+                    _print_assistant_text(ui_state["streaming_text"])
+                    ui_state["streaming_text"] = ""
+                    _invalidate_prompt()
+                elif not message_text(final_message).strip():
+                    console.print("[italic dim](no output; inspect `xagent trace latest` for the full event trail)[/italic dim]")
                     console.print()
 
                 token_count += sum(len(message_text(m).split()) for m in agent.messages)
@@ -519,4 +651,31 @@ async def run_tui(cwd: str) -> None:
                 format_runtime_error(exc)
 
             finally:
-                prompt_task = asyncio.create_task(_prompt_once())
+                agent.set_requested_skill_name(None)
+                ui_state["streaming"] = False
+                _invalidate_prompt()
+
+
+class SlashCommandCompleter(Completer):
+    def __init__(self, commands: List[Dict[str, str]]) -> None:
+        self.commands = commands
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            return
+        if " " in text:
+            return
+
+        query = text[1:].lower()
+        for command in self.commands:
+            name = command["name"]
+            description = command.get("description", "")
+            if query and query not in f"{name} {description}".lower():
+                continue
+            yield Completion(
+                f"/{name}",
+                start_position=-len(text),
+                display=f"/{name}",
+                display_meta=description,
+            )

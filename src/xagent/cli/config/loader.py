@@ -36,6 +36,48 @@ def resolve_default_model(config: AppConfig) -> ModelConfig:
     raise ValueError(f"Default model '{config.default_model}' was not found.")
 
 
+def add_model(config: AppConfig, model: ModelConfig, *, make_default: bool = False) -> AppConfig:
+    if any(existing.name == model.name for existing in config.models):
+        raise ValueError(f"Model '{model.name}' already exists.")
+    models = [*config.models, model]
+    default_model = model.name if make_default else config.default_model
+    return AppConfig(default_model=default_model, models=models)
+
+
+def remove_model(config: AppConfig, model_name: str) -> AppConfig:
+    remaining = [model for model in config.models if model.name != model_name]
+    if len(remaining) == len(config.models):
+        raise ValueError(f"Model '{model_name}' is not defined in config.")
+    if not remaining:
+        raise ValueError("Cannot remove the last configured model.")
+    default_model = config.default_model
+    if default_model == model_name:
+        default_model = remaining[0].name
+    return AppConfig(default_model=default_model, models=remaining)
+
+
+def set_default_model_name(config: AppConfig, model_name: str) -> AppConfig:
+    if not any(model.name == model_name for model in config.models):
+        raise ValueError(f"Model '{model_name}' is not defined in config.")
+    return AppConfig(default_model=model_name, models=config.models)
+
+
+def default_base_url(provider: str) -> str:
+    if provider == "ark":
+        return "https://ark.cn-beijing.volces.com/api/v3"
+    if provider == "anthropic":
+        return "https://api.anthropic.com"
+    return "https://api.openai.com/v1"
+
+
+def default_api_key_env(provider: str) -> str:
+    if provider == "ark":
+        return "ARK_API_KEY"
+    if provider == "anthropic":
+        return "ANTHROPIC_API_KEY"
+    return "OPENAI_API_KEY"
+
+
 def _dump_config(config: AppConfig) -> str:
     return dump_config_yaml(config)
 

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from xagent.coding.workspace import resolve_workspace_path
+from xagent.coding.workspace import resolve_tool_path
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 
 
@@ -10,8 +10,8 @@ class MovePathInput(BaseModel):
 
 
 async def _move_path(args: MovePathInput, ctx: ToolContext) -> ToolResult:
-    source = resolve_workspace_path(ctx.cwd, args.source)
-    destination = resolve_workspace_path(ctx.cwd, args.destination)
+    source = await resolve_tool_path(ctx, args.source, "write")
+    destination = await resolve_tool_path(ctx, args.destination, "write")
     if not source.exists():
         return ToolResult(content=f"Source path not found: {args.source}", is_error=True)
 

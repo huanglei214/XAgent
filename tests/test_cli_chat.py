@@ -5,7 +5,7 @@ from typer.testing import CliRunner
 
 from xagent.cli.main import app
 from xagent.cli.tui.commands import filter_commands, get_slash_query, insert_command
-from xagent.cli.tui.tui import build_header_text, build_sidebar_text, build_transcript_text
+from xagent.cli.tui.tui import SlashCommandCompleter, build_header_text, build_sidebar_text, build_transcript_text
 from xagent.foundation.messages import Message, TextPart, ToolResultPart, ToolUsePart
 
 
@@ -81,3 +81,25 @@ class CliChatTests(unittest.TestCase):
         commands = filter_commands("st")
         self.assertGreaterEqual(len(commands), 1)
         self.assertEqual(commands[0]["name"], "status")
+
+    def test_filter_commands_supports_external_skill_commands(self) -> None:
+        commands = filter_commands(
+            "rev",
+            [
+                {"name": "help", "description": "Show help", "type": "builtin"},
+                {"name": "review-helper", "description": "Review repository changes", "type": "skill"},
+            ],
+        )
+        self.assertEqual(commands[0]["name"], "review-helper")
+
+    def test_slash_command_completer_includes_skills(self) -> None:
+        from prompt_toolkit.document import Document
+
+        completer = SlashCommandCompleter(
+            [
+                {"name": "help", "description": "Show help", "type": "builtin"},
+                {"name": "review-helper", "description": "Review repository changes", "type": "skill"},
+            ]
+        )
+        completions = list(completer.get_completions(Document("/rev"), None))
+        self.assertEqual(completions[0].text, "/review-helper")

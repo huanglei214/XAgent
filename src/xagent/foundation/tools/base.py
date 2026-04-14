@@ -3,11 +3,13 @@ from __future__ import annotations
 import inspect
 from typing import Any, Awaitable, Callable, Optional, Type
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ToolContext(BaseModel):
     cwd: str
+    request_path_access: Any = None
+    allowed_external_paths: set[str] = Field(default_factory=set)
 
 
 class ToolResult(BaseModel):
@@ -40,10 +42,15 @@ class Tool:
 
     async def invoke(self, raw_input: dict[str, Any], ctx: ToolContext) -> ToolResult:
         parsed = self.input_model.model_validate(raw_input)
-        result = self._handler(parsed, ctx)
-        if inspect.isawaitable(result):
-            result = await result
-        return result
+        try:
+            result = self._handler(parsed, ctx)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+        except Exception as exc:
+            if exc.__class__.__name__ == "WorkspaceEscapeError":
+                return ToolResult(content=str(exc), is_error=True)
+            raise
 
 
 def find_tool(tools: list[Tool], name: str) -> Optional[Tool]:

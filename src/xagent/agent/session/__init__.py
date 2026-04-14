@@ -1,3 +1,3 @@
-from xagent.agent.session.store import SessionStore
+from xagent.agent.session.store import SessionLoadMetadata, SessionStore
 
-__all__ = ["SessionStore"]
+__all__ = ["SessionLoadMetadata", "SessionStore"]

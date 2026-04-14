@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from xagent.coding.workspace import resolve_workspace_path
+from xagent.coding.workspace import resolve_tool_path
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 
 
@@ -11,7 +11,7 @@ class FileInfoInput(BaseModel):
 
 
 async def _file_info(args: FileInfoInput, ctx: ToolContext) -> ToolResult:
-    target = resolve_workspace_path(ctx.cwd, args.path)
+    target = await resolve_tool_path(ctx, args.path, "read")
     if not target.exists():
         return ToolResult(content=f"Path not found: {args.path}", is_error=True)
 

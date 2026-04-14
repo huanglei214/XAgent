@@ -9,7 +9,8 @@ from xagent.agent.core import Agent
 from xagent.foundation.runtime.paths import get_trace_index_file
 from xagent.foundation.messages import Message, TextPart, ToolUsePart, message_text
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
-from xagent.cli.runtime import run_agent_turn, run_agent_turn_stream
+from xagent.cli.runtime import make_external_path_approval_handler, run_agent_turn, run_agent_turn_stream
+from xagent.coding.tools.read_file import read_file_tool
 
 
 class _SuccessProvider:
@@ -91,10 +92,12 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertIn("task_started", event_types)
             self.assertIn("user_input", event_types)
+            self.assertIn("agent_step_started", event_types)
             self.assertIn("model_request", event_types)
             self.assertIn("model_response", event_types)
             self.assertIn("tool_call_started", event_types)
             self.assertIn("tool_call_finished", event_types)
+            self.assertIn("agent_step_finished", event_types)
             self.assertIn("state_snapshot", event_types)
             self.assertIn("task_finished", event_types)
 
@@ -181,3 +184,53 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
             index = json.loads(get_trace_index_file(root).read_text(encoding="utf-8"))
             self.assertEqual(index[-1]["status"], "failed")
             self.assertIn("provider exploded", index[-1]["error"])
+
+    async def test_external_path_approval_is_traced(self) -> None:
+        class _ExternalReadProvider:
+            def __init__(self, external_path: Path) -> None:
+                self.calls = 0
+                self.external_path = external_path
+
+            async def complete(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    return Message(
+                        role="assistant",
+                        content=[
+                            ToolUsePart(
+                                id="call_1",
+                                name="read_file",
+                                input={"path": str(self.external_path)},
+                            )
+                        ],
+                    )
+                return Message(role="assistant", content=[TextPart(text="loaded")])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            external = (root.parent / "external-trace.txt").resolve()
+            external.write_text("external", encoding="utf-8")
+
+            agent = Agent(
+                provider=_ExternalReadProvider(external),
+                model="ep-test",
+                system_prompt="You are XAgent",
+                tools=[read_file_tool],
+                cwd=str(root),
+            )
+            agent.provider_name = "ark"
+            agent.runtime_mode = "run"
+            agent.request_path_access = make_external_path_approval_handler(
+                prompt_fn=lambda _: True,
+                recorder_getter=lambda: getattr(agent, "trace_recorder", None),
+            )
+
+            message, _ = await run_agent_turn(agent, "read external file")
+            self.assertEqual(message.content[0].text, "loaded")
+
+            trace_path = agent.last_trace_recorder.path
+            events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+            event_types = [event["event_type"] for event in events]
+
+        self.assertIn("external_path_access_requested", event_types)
+        self.assertIn("external_path_access_decided", event_types)

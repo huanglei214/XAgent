@@ -1,12 +1,23 @@
 import typer
 
 from xagent.cli.config.env import ensure_env_file
-from xagent.cli.config.loader import config_exists, load_config, save_config
-from xagent.cli.config.schema import AppConfig, default_config
+from xagent.cli.config.loader import (
+    add_model,
+    config_exists,
+    default_api_key_env,
+    default_base_url,
+    load_config,
+    remove_model,
+    save_config,
+    set_default_model_name,
+)
+from xagent.cli.config.schema import AppConfig, ModelConfig, default_config
 from xagent.cli.config.template import ensure_config_example_file
 from xagent.cli.tui.render import print_error, print_info
 
 config_app = typer.Typer(help="Manage XAgent configuration.")
+model_app = typer.Typer(help="Manage configured models.")
+config_app.add_typer(model_app, name="model")
 
 
 @config_app.command("init")
@@ -45,10 +56,77 @@ def set_default_model(model_name: str = typer.Argument(..., help="Configured mod
         print_error(str(exc))
         raise typer.Exit(code=1) from exc
 
-    if not any(model.name == model_name for model in config.models):
-        print_error(f"Model '{model_name}' is not defined in config.")
+    updated = set_default_model_name(config, model_name)
+    save_config(updated)
+    print_info(f"Default model set to {model_name}.")
+
+
+@model_app.command("list")
+def list_models() -> None:
+    try:
+        config = load_config()
+    except FileNotFoundError as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    for model in config.models:
+        marker = "*" if model.name == config.default_model else " "
+        print_info(
+            f"{marker} {model.name} | provider={model.provider} | base_url={model.base_url or '-'} | env={model.api_key_env}"
+        )
+
+
+@model_app.command("add")
+def add_model_command(
+    name: str = typer.Argument(..., help="Model name or endpoint id."),
+    provider: str = typer.Option(..., "--provider", help="Provider type: openai, anthropic, or ark."),
+    base_url: str = typer.Option("", "--base-url", help="Provider base URL. Uses provider default when omitted."),
+    api_key_env: str = typer.Option("", "--api-key-env", help="API key environment variable name."),
+    make_default: bool = typer.Option(False, "--default", help="Set the new model as default."),
+) -> None:
+    try:
+        config = load_config()
+    except FileNotFoundError as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    provider = provider.strip().lower()
+    if provider not in {"openai", "anthropic", "ark"}:
+        print_error(f"Unsupported provider '{provider}'. Use openai, anthropic, or ark.")
         raise typer.Exit(code=1)
 
-    updated = AppConfig(default_model=model_name, models=config.models)
+    model = ModelConfig(
+        name=name,
+        provider=provider,
+        base_url=base_url or default_base_url(provider),
+        api_key_env=api_key_env or default_api_key_env(provider),
+    )
+    updated = add_model(config, model, make_default=make_default)
+    save_config(updated)
+    print_info(f"Added model {name}.")
+
+
+@model_app.command("remove")
+def remove_model_command(model_name: str = typer.Argument(..., help="Configured model name.")) -> None:
+    try:
+        config = load_config()
+    except FileNotFoundError as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    updated = remove_model(config, model_name)
+    save_config(updated)
+    print_info(f"Removed model {model_name}. Default is now {updated.default_model}.")
+
+
+@model_app.command("set-default")
+def set_default_model_command(model_name: str = typer.Argument(..., help="Configured model name.")) -> None:
+    try:
+        config = load_config()
+    except FileNotFoundError as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    updated = set_default_model_name(config, model_name)
     save_config(updated)
     print_info(f"Default model set to {model_name}.")

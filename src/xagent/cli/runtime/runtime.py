@@ -1,6 +1,8 @@
+import inspect
 import json
-from pathlib import Path
 import time
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 import typer
 
@@ -32,6 +34,9 @@ def build_runtime_agent(cwd: str):
     )
     agent.provider_name = model_config.provider
     agent.approval_store = approval_store
+    agent.request_path_access = make_external_path_approval_handler(
+        recorder_getter=lambda: getattr(agent, "trace_recorder", None)
+    )
     return agent
 
 
@@ -95,7 +100,12 @@ async def run_agent_turn_stream(agent, prompt: str, on_assistant_delta=None, on_
         if recorder is not None:
             stage = getattr(agent, "last_error_stage", None) or "runtime"
             recorder.record_state_snapshot(agent, "failure", extra={"error": str(exc)})
-            recorder.finish_failure(error=str(exc), stage=stage, duration_seconds=duration)
+            recorder.finish_failure(
+                error=str(exc),
+                stage=stage,
+                duration_seconds=duration,
+                termination_reason=getattr(agent, "last_termination_reason", None),
+            )
             agent.trace_recorder = None
         raise
     finally:
@@ -105,6 +115,54 @@ async def run_agent_turn_stream(agent, prompt: str, on_assistant_delta=None, on_
 
 def format_runtime_error(exc: Exception) -> None:
     print_error(str(exc))
+
+
+def make_external_path_approval_handler(
+    prompt_fn: Optional[Callable[[str], Any]] = None,
+    recorder_getter: Optional[Callable[[], Any]] = None,
+):
+    prompt = prompt_fn or (
+        lambda text: typer.confirm(
+            text,
+            default=False,
+        )
+    )
+
+    async def _handler(path: str, access_kind: str) -> bool:
+        recorder = recorder_getter() if recorder_getter is not None else None
+        if recorder is not None:
+            recorder.emit(
+                "external_path_access_requested",
+                payload={"path": path, "access_kind": access_kind},
+                tags={"access_kind": access_kind},
+            )
+
+        decision = prompt(f"Allow {access_kind} access outside the workspace for '{path}'? [y/N]")
+        if inspect.isawaitable(decision):
+            decision = await decision
+        allowed = _normalize_confirmation(decision)
+
+        if recorder is not None:
+            recorder.emit(
+                "external_path_access_decided",
+                payload={
+                    "path": path,
+                    "access_kind": access_kind,
+                    "decision": "allow" if allowed else "deny",
+                },
+                tags={"access_kind": access_kind, "status": "allowed" if allowed else "denied"},
+            )
+        return allowed
+
+    return _handler
+
+
+def _normalize_confirmation(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"y", "yes", "true", "1", "allow", "allowed"}
 
 
 def render_turn_status(duration_seconds: float, agent) -> None:

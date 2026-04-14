@@ -22,6 +22,8 @@ class AppConfig(BaseModel):
         if not self.models:
             raise ValueError("Config must define at least one model.")
         model_names = {model.name for model in self.models}
+        if len(model_names) != len(self.models):
+            raise ValueError("Config contains duplicate model names.")
         if self.default_model not in model_names:
             raise ValueError(f"default_model '{self.default_model}' does not match any configured model.")
         return self

@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from xagent.coding.workspace import resolve_workspace_path
+from xagent.coding.workspace import resolve_tool_path
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 
 
@@ -14,7 +14,7 @@ class ReadFileInput(BaseModel):
 
 
 async def _read_file(args: ReadFileInput, ctx: ToolContext) -> ToolResult:
-    target = resolve_workspace_path(ctx.cwd, args.path)
+    target = await resolve_tool_path(ctx, args.path, "read")
     if not target.exists():
         return ToolResult(content=f"File not found: {args.path}", is_error=True)
     if not target.is_file():

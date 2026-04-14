@@ -32,9 +32,30 @@ class TraceMiddleware(AgentMiddleware):
         if recorder is None:
             return
         duration = self._duration()
+        output_text = message_text(final_message)
+        if not output_text.strip():
+            recorder.emit("assistant_output_empty", payload={"message_count": len(getattr(agent, "messages", []))})
         recorder.record_state_snapshot(agent, "post_turn")
-        recorder.finish_success(output_text=message_text(final_message), duration_seconds=duration)
+        recorder.finish_success(
+            output_text=output_text,
+            duration_seconds=duration,
+            termination_reason=getattr(agent, "last_termination_reason", None) or "completed",
+        )
         agent.trace_recorder = None
+
+    async def before_agent_step(self, *, agent, step: int) -> None:
+        recorder = getattr(agent, "trace_recorder", None)
+        if recorder is not None:
+            recorder.emit("agent_step_started", payload={"step": step}, tags={"step": step})
+
+    async def after_agent_step(self, *, agent, step: int) -> None:
+        recorder = getattr(agent, "trace_recorder", None)
+        if recorder is not None:
+            recorder.emit(
+                "agent_step_finished",
+                payload={"step": step, "message_count": len(getattr(agent, "messages", []))},
+                tags={"step": step},
+            )
 
     async def before_model(self, *, agent, request):
         recorder = getattr(agent, "trace_recorder", None)
