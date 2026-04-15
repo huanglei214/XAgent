@@ -1,5 +1,6 @@
 from xagent.cli.runtime.runtime import (
     build_runtime_agent,
+    build_session_runtime,
     format_runtime_error,
     get_runtime_status,
     make_external_path_approval_handler,
@@ -12,6 +13,7 @@ from xagent.cli.runtime.runtime import (
 
 __all__ = [
     "build_runtime_agent",
+    "build_session_runtime",
     "format_runtime_error",
     "get_runtime_status",
     "make_external_path_approval_handler",

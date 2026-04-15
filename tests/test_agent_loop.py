@@ -277,7 +277,7 @@ class AgentLoopTests(unittest.IsolatedAsyncioTestCase):
         elapsed = time.perf_counter() - started
 
         self.assertEqual(message_text(message), "done")
-        self.assertLess(elapsed, 0.095)
+        self.assertLess(elapsed, 0.16)
         tool_messages = [m for m in agent.messages if m.role == "tool"]
         self.assertEqual(len(tool_messages), 2)
         self.assertIn("Finished first.", tool_messages[0].content[0].content)

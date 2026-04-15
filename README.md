@@ -1,6 +1,6 @@
 # XAgent
 
-XAgent is a Python coding assistant CLI.
+XAgent is a Python workspace-aware assistant runtime and CLI.
 
 ## Quick Start
 
@@ -56,8 +56,8 @@ XAgent is a Python coding assistant CLI.
 8. 运行简单任务测试配置是否正确：
    ```bash
    # 已激活虚拟环境时使用
-   xagent run "Say hello and explain what you can do"
+   xagent run "Say hello and explain what you can do in this workspace"
    
    # 未激活虚拟环境时使用
-   uv run xagent run "Say hello and explain what you can do"
+   uv run xagent run "Say hello and explain what you can do in this workspace"
    ```

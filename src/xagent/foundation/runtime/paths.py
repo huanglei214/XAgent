@@ -44,6 +44,18 @@ def get_sessions_dir(start: Optional[Path] = None) -> Path:
     return get_config_dir(start) / "sessions"
 
 
+def get_semantic_memory_file(start: Optional[Path] = None) -> Path:
+    return get_config_dir(start) / "semantic-memory.json"
+
+
+def get_scheduler_jobs_file(start: Optional[Path] = None) -> Path:
+    return get_config_dir(start) / "scheduler-jobs.json"
+
+
+def get_scheduler_history_file(start: Optional[Path] = None) -> Path:
+    return get_config_dir(start) / "scheduler-history.jsonl"
+
+
 def get_traces_dir(start: Optional[Path] = None) -> Path:
     return get_config_dir(start) / "traces"
 

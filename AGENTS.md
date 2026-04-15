@@ -1,6 +1,6 @@
 # XAgent Working Agreement
 
-This repository builds `XAgent`, a Python coding assistant CLI.
+This repository builds `XAgent`, a Python workspace-aware assistant runtime and CLI.
 
 ## Architecture Target
 
@@ -10,30 +10,33 @@ The project should converge toward this layered structure:
 src/xagent/
   foundation/
   agent/
-  coding/
   community/
+  gateway/
+  scheduler/
   cli/
 ```
 
 Interpretation of each layer:
 
 - `foundation`: base protocols and shared primitives only.
-- `agent`: generic agent runtime capabilities such as loop, middleware, todos, session, and traces.
-- `coding`: coding-domain behavior, workspace rules, approval policy, and coding tools.
+- `agent`: agent runtime capabilities such as loop, middleware, todos, session, traces, memory, policies, and workspace tools.
 - `community`: external model/provider adapters such as OpenAI, Anthropic, and Ark.
+- `gateway`: remote access surfaces such as HTTP, SSE, and WebSocket adapters.
+- `scheduler`: scheduled job orchestration and cron-like dispatch.
 - `cli`: product entrypoints, command handlers, runtime wiring, UI helpers, and local config helpers.
 
-Do not introduce new top-level technical buckets such as `providers/`, `memory/`, `traces/`, or `config/` under `src/xagent/` long-term. Prefer placing code into one of the five target layers above.
+Do not introduce new top-level technical buckets such as `providers/`, `memory/`, `traces/`, or `config/` under `src/xagent/` long-term. Prefer placing code into one of the six target layers above.
 
 ## Structural Rules
 
 - Prefer one more directory level inside each major layer when it improves grouping clarity.
 - Avoid a flat directory full of unrelated `*.py` files once a layer starts holding multiple concepts.
 - Keep imports directional when possible:
-  - `foundation` should not depend on `agent`, `coding`, `community`, or `cli`.
+  - `foundation` should not depend on `agent`, `community`, `gateway`, `scheduler`, or `cli`.
   - `agent` may depend on `foundation`, but not on `cli`.
-  - `coding` may depend on `agent` and `foundation`.
   - `community` may depend on `foundation`.
+  - `gateway` may depend on `agent`, `community`, and `foundation`.
+  - `scheduler` may depend on `agent` and `foundation`.
   - `cli` may depend on every lower layer.
 
 ## Middleware Rules
@@ -56,7 +59,7 @@ Do not introduce new top-level technical buckets such as `providers/`, `memory/`
 - System-level failures such as provider failures, loop failures, or invalid runtime state may raise exceptions.
 - Trace failure capture should happen at the runtime boundary, not through a dedicated middleware error hook.
 
-## Coding Agent Rules
+## Workspace Agent Rules
 
 - Read relevant files before editing them.
 - Prefer `str_replace` or `apply_patch` for targeted edits.

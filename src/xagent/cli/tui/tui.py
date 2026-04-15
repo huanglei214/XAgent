@@ -23,19 +23,23 @@ from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
-from xagent.agent.session import SessionStore, SessionSummary
+from xagent.agent.policies import ApprovalMiddleware
+from xagent.agent.session import SessionSummary
+from xagent.agent.tools.workspace.ask_user_question import (
+    AskUserQuestionAnswer,
+    AskUserQuestionInput,
+    AskUserQuestionResultData,
+)
 from xagent.agent.tool_result_runtime import summarize_tool_result_for_ui
 from xagent.agent.core import AgentAborted
 from xagent.cli.runtime.runtime import (
     build_runtime_agent,
+    build_session_runtime,
     format_runtime_error,
     get_runtime_status,
     make_external_path_approval_handler,
-    run_agent_turn_stream,
 )
 from xagent.cli.tui.commands import BUILTIN_COMMANDS
-from xagent.coding.middleware import ApprovalMiddleware
-from xagent.coding.tools.ask_user_question import AskUserQuestionAnswer, AskUserQuestionInput, AskUserQuestionResultData
 from xagent.foundation.messages import Message, ToolResultPart, ToolUsePart, message_text
 
 
@@ -602,7 +606,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
     @kb.add("c-c")
     def _on_ctrl_c(event) -> None:
         if ui_state["streaming"]:
-            agent.abort()
+            session_runtime.abort()
             _print_runtime_block("Cancelling run", ["User requested abort via Ctrl+C"])
             return
         event.current_buffer.text = "/exit"
@@ -735,7 +739,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
 
         search_buffer = Buffer()
         filtered_entries = list(entries)
-        default_session_id = _default_session_picker_selection(entries, agent.trace_session_id)
+        default_session_id = _default_session_picker_selection(entries, session_runtime.session_id)
         initial_index = next(
             (index for index, item in enumerate(filtered_entries) if item.session_id == default_session_id),
             0,
@@ -913,8 +917,10 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
     agent = build_runtime_agent(cwd, ask_user_question=_ask_user_questions)
     agent.runtime_mode = "chat"
 
-    session_store = SessionStore(cwd)
-    agent.trace_session_id = session_store.new_session_id()
+    bus, session_runtime = build_session_runtime(
+        agent,
+        cwd=cwd,
+    )
 
     def _print_session_restored_notice(
         session_id: str,
@@ -939,20 +945,17 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
 
     def _load_session_into_agent(session_id: str) -> bool:
         nonlocal token_count
-        loaded_session_id, restored_messages, restore_metadata = session_store.load_state_with_metadata(session_id=session_id)
-        if not restored_messages and not session_store.session_exists(session_id):
+        restored = session_runtime.restore_session(session_id)
+        if restored is None:
             return False
-        agent.clear_messages()
-        agent.set_messages(restored_messages)
-        agent.trace_session_id = loaded_session_id
         token_count = sum(len(message_text(m).split()) for m in agent.messages)
         console.clear()
         _print_header(agent)
-        _print_session_restored_notice(loaded_session_id, restore_metadata, source="session")
+        _print_session_restored_notice(restored.session_id, restored.metadata, source="session")
         return True
 
     async def _prompt_resume_session_choice() -> Optional[str]:
-        entries = session_store.list_sessions(limit=12)
+        entries = session_runtime.list_sessions(limit=12)
         if not entries:
             console.print("[dim]No saved sessions available to resume.[/dim]")
             console.print()
@@ -962,7 +965,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
     async def _resume_session(selected_session_id: Optional[str] = None) -> None:
         nonlocal token_count
         if agent.messages:
-            session_store.save_messages(agent.messages, session_id=agent.trace_session_id)
+            session_runtime.save_session()
 
         target_session_id = selected_session_id or await _prompt_resume_session_choice()
         if not target_session_id:
@@ -974,25 +977,21 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
 
     def _start_new_session() -> None:
         nonlocal token_count
-        if agent.messages:
-            session_store.save_messages(agent.messages, session_id=agent.trace_session_id)
-
-        agent.clear_messages()
-        agent.trace_session_id = session_store.new_session_id()
+        session_id = session_runtime.start_new_session()
         token_count = 0
         console.clear()
         _print_header(agent)
-        console.print(f"[italic dim]Started a new session {agent.trace_session_id}.[/italic dim]")
+        console.print(f"[italic dim]Started a new session {session_id}.[/italic dim]")
         console.print()
 
     def _exit_tui() -> None:
-        session_store.save_messages(agent.messages, session_id=agent.trace_session_id)
-        console.print(f"[dim]{build_resume_hint_text(agent.trace_session_id)}[/dim]")
+        session_runtime.save_session()
+        console.print(f"[dim]{build_resume_hint_text(session_runtime.session_id)}[/dim]")
         console.print("[dim]Bye![/dim]")
 
     if resume:
         target_session_id = resume_session_id or next(
-            (entry.session_id for entry in session_store.list_sessions(limit=1)),
+            (entry.session_id for entry in session_runtime.list_sessions(limit=1)),
             None,
         )
         if target_session_id and _load_session_into_agent(target_session_id):
@@ -1000,11 +999,9 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
         elif resume_session_id:
             console.print(f"[italic dim]Session {resume_session_id} was not found. Started a new session.[/italic dim]")
             console.print()
-            agent.trace_session_id = session_store.new_session_id()
         else:
             console.print("[italic dim]No previous session found. Started a new session.[/italic dim]")
             console.print()
-            agent.trace_session_id = session_store.new_session_id()
     command_sources = [*BUILTIN_COMMANDS, *[skill.__dict__ for skill in getattr(agent, "skills", [])]]
 
     if not resume or not agent.messages:
@@ -1068,6 +1065,72 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
             if summary:
                 _print_runtime_block("Agent note", [summary])
 
+    def _clear_thinking() -> None:
+        if ui_state["thinking_active"]:
+            ui_state["thinking_active"] = False
+            _invalidate_prompt()
+
+    def _handle_assistant_delta_event(event) -> None:
+        if event.session_id != session_runtime.session_id:
+            return
+        new_text = str(event.payload.get("text", ""))
+        if not new_text.strip():
+            return
+        ui_state["streaming_text"] = new_text
+        _clear_thinking()
+        _invalidate_prompt()
+
+    def _handle_tool_called_event(event) -> None:
+        if event.session_id != session_runtime.session_id:
+            return
+        _clear_thinking()
+        if ui_state["streaming_text"]:
+            _print_assistant_text(ui_state["streaming_text"])
+            ui_state["streaming_text"] = ""
+            _invalidate_prompt()
+
+        tool_use = event.payload.get("tool_use")
+        if tool_use is None:
+            return
+        line = Text()
+        line.append(f"○ {tool_use.name} ", style="dim")
+        line.append(summarize_payload(tool_use.input), style="dim")
+        console.print(line)
+
+    def _handle_tool_finished_event(event) -> None:
+        if event.session_id != session_runtime.session_id:
+            return
+        _clear_thinking()
+        result = event.payload.get("result")
+        if result is None:
+            return
+        marker = "✖" if result.is_error else "✓"
+        style_name = "red" if result.is_error else "dim"
+        truncated = result.content if len(result.content) <= 200 else result.content[:197] + "..."
+        line = Text()
+        line.append(f"  └─ {marker} ", style=style_name)
+        line.append(truncated, style=style_name)
+        console.print(line)
+
+    def _handle_turn_terminal_event(event) -> None:
+        if event.session_id != session_runtime.session_id:
+            return
+        _clear_thinking()
+
+    def _handle_compaction_completed_event(event) -> None:
+        nonlocal token_count
+        if event.session_id != session_runtime.session_id:
+            return
+        token_count = sum(len(message_text(m).split()) for m in agent.messages)
+        _print_runtime_block(
+            "AutoCompact",
+            [
+                f"checkpointed {event.payload.get('checkpointed_message_count', 0)} messages",
+                f"kept {event.payload.get('recent_message_count', 0)} recent messages",
+            ],
+        )
+        _invalidate_prompt()
+
     agent.request_path_access = make_external_path_approval_handler(
         prompt_fn=_prompt_path_access,
         recorder_getter=lambda: getattr(agent, "trace_recorder", None),
@@ -1076,6 +1139,14 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
     for middleware in getattr(agent, "middlewares", []):
         if isinstance(middleware, ApprovalMiddleware):
             middleware.prompt_fn = _prompt_modal
+
+    if bus is not None:
+        bus.subscribe("assistant.delta", _handle_assistant_delta_event)
+        bus.subscribe("tool.called", _handle_tool_called_event)
+        bus.subscribe("tool.finished", _handle_tool_finished_event)
+        bus.subscribe("session.turn.completed", _handle_turn_terminal_event)
+        bus.subscribe("session.turn.failed", _handle_turn_terminal_event)
+        bus.subscribe("memory.compaction.completed", _handle_compaction_completed_event)
 
     with patch_stdout(raw=True):
         prompt_task = asyncio.create_task(_prompt_once())
@@ -1117,8 +1188,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
                 continue
 
             if text == "/clear":
-                agent.clear_messages()
-                session_store.clear(session_id=agent.trace_session_id)
+                session_runtime.clear_session()
                 token_count = 0
                 console.clear()
                 _print_header(agent)
@@ -1137,7 +1207,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
             if text in {"/abort", "/cancel"}:
                 _print_user_message(text)
                 if ui_state["streaming"]:
-                    agent.abort()
+                    session_runtime.abort()
                     _print_runtime_block("Cancelling run", ["User requested abort"])
                 else:
                     console.print("[dim]No active run to abort.[/dim]")
@@ -1167,8 +1237,6 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
             prompt_task = asyncio.create_task(_prompt_once())
 
             try:
-                agent.set_requested_skill_name(requested_skill_name)
-
                 # 初始显示炫酷的扫光动画
                 ui_state["thinking_active"] = True
                 ui_state["thinking_frame"] = 0
@@ -1184,49 +1252,10 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
 
                 asyncio.create_task(animate_thinking())
 
-                def _clear_thinking() -> None:
-                    if ui_state["thinking_active"]:
-                        ui_state["thinking_active"] = False
-                        _invalidate_prompt()
-
-                def _on_delta(snapshot: Message) -> None:
-                    new_text = message_text(snapshot)
-                    if not new_text.strip():
-                        return
-                    ui_state["streaming_text"] = new_text
-                    _clear_thinking()
-                    _invalidate_prompt()
-
-                def _on_tool_use(tool_use: ToolUsePart) -> None:
-                    _clear_thinking()
-                    # If we had streaming text, print it to stdout to keep it before tool output
-                    if ui_state["streaming_text"]:
-                        _print_assistant_text(ui_state["streaming_text"])
-                        ui_state["streaming_text"] = ""
-                        _invalidate_prompt()
-                    
-                    # 打印工具调用
-                    line = Text()
-                    line.append(f"○ {tool_use.name} ", style="dim")
-                    line.append(summarize_payload(tool_use.input), style="dim")
-                    console.print(line)
-
-                def _on_tool_result(tool_use: ToolUsePart, result: ToolResultPart) -> None:
-                    _clear_thinking()
-                    marker = "✖" if result.is_error else "✓"
-                    style = "red" if result.is_error else "dim"
-                    truncated = result.content if len(result.content) <= 200 else result.content[:197] + "..."
-                    line = Text()
-                    line.append(f"  └─ {marker} ", style=style)
-                    line.append(truncated, style=style)
-                    console.print(line)
-
-                final_message, duration = await run_agent_turn_stream(
-                    agent,
+                final_turn = await session_runtime.publish_user_message(
                     text,
-                    on_assistant_delta=_on_delta,
-                    on_tool_use=_on_tool_use,
-                    on_tool_result=_on_tool_result,
+                    source="tui",
+                    requested_skill_name=requested_skill_name,
                 )
 
                 _clear_thinking()
@@ -1236,13 +1265,12 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
                     _print_assistant_text(ui_state["streaming_text"])
                     ui_state["streaming_text"] = ""
                     _invalidate_prompt()
-                elif not message_text(final_message).strip():
+                elif not message_text(final_turn.message).strip():
                     console.print("[italic dim](no output; inspect `xagent trace latest` for the full event trail)[/italic dim]")
                     console.print()
 
                 token_count = sum(len(message_text(m).split()) for m in agent.messages)
-                session_store.save_messages(agent.messages, session_id=agent.trace_session_id)
-                console.print(f"[italic dim]Completed in {duration:.2f}s[/italic dim]")
+                console.print(f"[italic dim]Completed in {final_turn.duration_seconds:.2f}s[/italic dim]")
                 console.print()
 
             except AgentAborted:
@@ -1254,7 +1282,6 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
                 format_runtime_error(exc)
 
             finally:
-                agent.set_requested_skill_name(None)
                 ui_state["streaming"] = False
                 _invalidate_prompt()
 

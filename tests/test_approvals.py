@@ -6,8 +6,7 @@ from unittest.mock import patch
 from pydantic import BaseModel
 
 from xagent.agent.core import Agent
-from xagent.coding.permissions import ApprovalStore, requires_approval
-from xagent.coding.middleware import ApprovalMiddleware
+from xagent.agent.policies import ApprovalMiddleware, ApprovalStore, requires_approval
 from xagent.foundation.messages import Message, ToolUsePart
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 

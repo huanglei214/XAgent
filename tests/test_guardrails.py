@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from xagent.coding.middleware import EditGuardrailsMiddleware
-from xagent.coding.tools.read_file import read_file_tool
+from xagent.agent.policies import EditGuardrailsMiddleware
+from xagent.agent.tools.workspace.read_file import read_file_tool
 from xagent.foundation.messages import ToolResultPart, ToolUsePart
 from xagent.foundation.tools import ToolContext
 

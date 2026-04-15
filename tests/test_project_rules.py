@@ -2,9 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from xagent.coding.agents.coding_agent import create_coding_agent
-from xagent.coding.context import load_project_rules
-from xagent.coding.middleware.project_rules import ProjectRulesMiddleware
+from xagent.agent.policies import ProjectRulesMiddleware, load_project_rules
+from xagent.agent.runtime import create_workspace_agent
 from xagent.foundation.messages import Message, TextPart
 from xagent.foundation.models import ModelRequest
 
@@ -57,13 +56,13 @@ class ProjectRulesTests(unittest.TestCase):
             ),
         )
 
-    def test_create_coding_agent_injects_project_rules_as_user_context_message(self) -> None:
+    def test_create_workspace_agent_injects_project_rules_as_user_context_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
             (root / "AGENTS.md").write_text("Root rules", encoding="utf-8")
 
-            agent = create_coding_agent(
+            agent = create_workspace_agent(
                 provider=object(),
                 model="ep-test",
                 cwd=str(root),
@@ -73,7 +72,7 @@ class ProjectRulesTests(unittest.TestCase):
         self.assertTrue(agent.context_messages)
         self.assertEqual(agent.context_messages[0].role, "user")
         self.assertIn("Root rules", agent.context_messages[0].content[0].text)
-        self.assertIn('<agent name="XAgent" role="coding_agent"', agent.system_prompt)
+        self.assertIn('<agent name="XAgent" role="workspace_agent"', agent.system_prompt)
         self.assertIn(f'<working_directory dir="{root.resolve().as_posix()}/" />', agent.system_prompt)
         self.assertIn("<tool_usage>", agent.system_prompt)
         self.assertIn("<editing_rules>", agent.system_prompt)
@@ -81,12 +80,12 @@ class ProjectRulesTests(unittest.TestCase):
         self.assertTrue(any(type(middleware).__name__ == "ProjectRulesMiddleware" for middleware in agent.middlewares))
         self.assertEqual(agent.max_steps, 100)
 
-    def test_create_coding_agent_includes_ask_user_question_tool_when_callback_present(self) -> None:
+    def test_create_workspace_agent_includes_ask_user_question_tool_when_callback_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
 
-            agent = create_coding_agent(
+            agent = create_workspace_agent(
                 provider=object(),
                 model="ep-test",
                 cwd=str(root),

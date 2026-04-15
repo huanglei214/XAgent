@@ -1,30 +1,36 @@
 import inspect
 import json
 import time
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 import typer
 
+from xagent.agent.memory import create_runtime_memory
+from xagent.agent.policies import ApprovalMiddleware, ApprovalStore
+from xagent.agent.runtime import SessionRuntime, create_workspace_agent
 from xagent.cli.tui.render import print_error, print_info, print_panel, print_tool_use
-from xagent.coding import create_coding_agent
-from xagent.coding.permissions import ApprovalStore
-from xagent.coding.middleware import ApprovalMiddleware
 from xagent.cli.config.env import load_project_env
 from xagent.cli.config.loader import load_config, resolve_default_model
 from xagent.foundation.messages import ToolUsePart, message_text
 from xagent.community import create_provider
 from xagent.agent.core.loop import AgentAborted
 from xagent.agent.traces import TraceMiddleware
+from xagent.foundation.events import InMemoryMessageBus
 
 
-def build_runtime_agent(cwd: str, ask_user_question: Optional[Callable] = None):
+def build_runtime_agent(
+    cwd: str,
+    ask_user_question: Optional[Callable] = None,
+    approval_prompt_fn: Optional[Callable[[str], Any]] = None,
+):
     load_project_env(Path(cwd))
     config = load_config()
     model_config = resolve_default_model(config)
     provider = create_provider(model_config)
     approval_store = ApprovalStore(cwd)
-    agent = create_coding_agent(
+    agent = create_workspace_agent(
         provider=provider,
         model=model_config.name,
         cwd=cwd,
@@ -32,7 +38,10 @@ def build_runtime_agent(cwd: str, ask_user_question: Optional[Callable] = None):
         ask_user_question=ask_user_question,
         middlewares=[
             TraceMiddleware(),
-            ApprovalMiddleware(approval_store=approval_store, prompt_fn=lambda prompt: typer.prompt(prompt, default="n")),
+            ApprovalMiddleware(
+                approval_store=approval_store,
+                prompt_fn=approval_prompt_fn or (lambda prompt: typer.prompt(prompt, default="n")),
+            ),
         ],
     )
     agent.provider_name = model_config.provider
@@ -57,6 +66,27 @@ def get_runtime_status(agent) -> str:
         f"Tools available: {len(tools)}\n"
         f"Persistent approvals: {len(allowed_tools)}"
     )
+
+
+def build_session_runtime(
+    agent,
+    session_id: Optional[str] = None,
+    *,
+    cwd: Optional[str] = None,
+    bus: Optional[InMemoryMessageBus] = None,
+    memory_bundle=None,
+):
+    message_bus = bus or InMemoryMessageBus()
+    runtime_memory = memory_bundle or create_runtime_memory(cwd or getattr(agent, "cwd", "."), agent=agent)
+    resolved_session_id = session_id or runtime_memory.episodic.new_session_id()
+    runtime = SessionRuntime(
+        session_id=resolved_session_id,
+        bus=message_bus,
+        turn_runner=partial(run_agent_turn_stream, agent),
+        agent=agent,
+        memory=runtime_memory,
+    )
+    return message_bus, runtime
 
 
 def render_tool_use(tool_use: ToolUsePart) -> None:

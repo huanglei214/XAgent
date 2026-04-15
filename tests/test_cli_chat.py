@@ -23,7 +23,7 @@ from xagent.cli.tui.tui import (
     build_transcript_text,
 )
 from xagent.agent.session import SessionSummary
-from xagent.coding.tools.ask_user_question import AskUserQuestionInput
+from xagent.agent.tools.workspace.ask_user_question import AskUserQuestionInput
 from xagent.foundation.messages import Message, TextPart, ToolResultPart, ToolUsePart
 
 

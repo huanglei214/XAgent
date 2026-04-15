@@ -4,10 +4,14 @@ import typer
 
 from xagent.cli.commands.chat import chat_command, resume_command
 from xagent.cli.commands.config import config_app
+from xagent.cli.commands.gateway import gateway_app
+from xagent.cli.commands.schedule import schedule_app
 from xagent.cli.commands.trace import trace_app
 
 app = typer.Typer(help="XAgent CLI", invoke_without_command=True, no_args_is_help=False)
 app.add_typer(config_app, name="config")
+app.add_typer(gateway_app, name="gateway")
+app.add_typer(schedule_app, name="schedule")
 app.add_typer(trace_app, name="trace")
 
 

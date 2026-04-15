@@ -82,7 +82,7 @@ class SessionStore:
 
         return session_id or str(uuid4()), [], SessionLoadMetadata(0, 0, 0, False)
 
-    def save_messages(self, messages: List[Message], session_id: Optional[str] = None) -> Path:
+    def save_messages(self, messages: List[Message], session_id: Optional[str] = None, *, compact: bool = True) -> Path:
         ensure_config_dir(self.cwd)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         resolved_session_id = session_id or str(uuid4())
@@ -97,7 +97,12 @@ class SessionStore:
             if isinstance(existing_branch, str) and existing_branch.strip():
                 branch = existing_branch.strip()
 
-        checkpoint_summary, checkpointed_message_count, recent_messages = self._compact_messages(messages)
+        if compact:
+            checkpoint_summary, checkpointed_message_count, recent_messages = self._compact_messages(messages)
+        else:
+            checkpoint_summary = None
+            checkpointed_message_count = 0
+            recent_messages = list(messages)
         payload = {
             "cwd": str(self.cwd.resolve()),
             "session_id": resolved_session_id,

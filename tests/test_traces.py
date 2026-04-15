@@ -11,7 +11,7 @@ from xagent.foundation.runtime.paths import get_trace_artifacts_dir, get_trace_i
 from xagent.foundation.messages import Message, TextPart, ToolUsePart, message_text
 from xagent.foundation.tools import Tool, ToolContext, ToolResult
 from xagent.cli.runtime import make_external_path_approval_handler, run_agent_turn, run_agent_turn_stream
-from xagent.coding.tools.read_file import read_file_tool
+from xagent.agent.tools.workspace.read_file import read_file_tool
 
 
 class _SuccessProvider:
