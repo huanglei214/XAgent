@@ -59,14 +59,6 @@ Do not introduce new top-level technical buckets such as `providers/`, `memory/`
 - System-level failures such as provider failures, loop failures, or invalid runtime state may raise exceptions.
 - Trace failure capture should happen at the runtime boundary, not through a dedicated middleware error hook.
 
-## Workspace Agent Rules
-
-- Read relevant files before editing them.
-- Prefer `str_replace` or `apply_patch` for targeted edits.
-- Use `write_file` only for full rewrites or brand-new files.
-- Mutating tools must stay behind approval handling.
-- Keep workspace operations rooted inside the project directory.
-
 ## Session and Trace Rules
 
 - Project-local state belongs under `.xagent/`.

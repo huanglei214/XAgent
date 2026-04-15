@@ -32,6 +32,14 @@ def _default_env_contents() -> str:
         "ARK_API_KEY=\n"
         "OPENAI_API_KEY=\n"
         "ANTHROPIC_API_KEY=\n"
+        "FEISHU_APP_ID=\n"
+        "FEISHU_APP_SECRET=\n"
+        "FEISHU_API_BASE_URL=https://open.feishu.cn\n"
+        "FEISHU_BOT_OPEN_ID=\n"
+        "FEISHU_GROUP_MODE=mention_only\n"
+        "FEISHU_ALLOW_ALL=false\n"
+        "FEISHU_ALLOWED_USER_IDS=\n"
+        "FEISHU_ALLOWED_CHAT_IDS=\n"
     )
 
 

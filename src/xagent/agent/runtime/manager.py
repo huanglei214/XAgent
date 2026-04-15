@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import logging
 import queue
+import sys
 import threading
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -13,6 +16,8 @@ from xagent.agent.memory import create_runtime_memory
 from xagent.foundation.events import Event
 from xagent.foundation.messages import Message, message_text
 from xagent.scheduler.cron import JobScheduler, PersistentJobScheduler, ScheduledJobRecord
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -247,8 +252,16 @@ class SessionRuntimeManager:
                     close()
             self._runtimes.clear()
 
+        shutdown_coro = _shutdown()
         try:
-            self._call(_shutdown())
+            self._call(shutdown_coro)
+        except RuntimeError:
+            shutdown_coro.close()
+            # Shutdown is best-effort during process teardown. If the runtime loop is
+            # blocked on in-flight work when the user interrupts, stop the loop and
+            # clear local references without surfacing a secondary traceback.
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(self._cancel_pending_tasks)
         finally:
             self._loop.call_soon_threadsafe(self._loop.stop)
             if self._thread is not None:
@@ -256,6 +269,11 @@ class SessionRuntimeManager:
             self._loop = None
             self._thread = None
             self._ready.clear()
+
+    def _cancel_pending_tasks(self) -> None:
+        loop = asyncio.get_running_loop()
+        for task in asyncio.all_tasks(loop):
+            task.cancel()
 
     def _start_loop(self) -> None:
         if self._loop is not None:
@@ -276,11 +294,30 @@ class SessionRuntimeManager:
             raise RuntimeError("Runtime manager loop failed to start.")
 
     def _call(self, coro):
+        operation = getattr(getattr(coro, "cr_code", None), "co_name", type(coro).__name__)
         self._start_loop()
+        logger.info(
+            "[RuntimeManager] _call start: operation=%s loop_running=%s thread_alive=%s runtimes=%d streams=%d",
+            operation,
+            self._loop.is_running() if self._loop is not None else False,
+            self._thread.is_alive() if self._thread is not None else False,
+            len(self._runtimes),
+            len(self._streams),
+        )
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
-            return future.result(timeout=30)
+            result = future.result(timeout=30)
+            logger.info("[RuntimeManager] _call done: operation=%s", operation)
+            return result
         except concurrent.futures.TimeoutError as exc:
+            logger.error(
+                "[RuntimeManager] _call timeout: operation=%s loop_running=%s thread_alive=%s pending_streams=%d",
+                operation,
+                self._loop.is_running() if self._loop is not None else False,
+                self._thread.is_alive() if self._thread is not None else False,
+                len(self._streams),
+            )
+            self._log_thread_stacks()
             raise RuntimeError("Runtime manager operation timed out.") from exc
 
     async def _create_session(self) -> str:
@@ -346,6 +383,12 @@ class SessionRuntimeManager:
         requested_skill_name: Optional[str] = None,
         source: str = "runtime.manager",
     ) -> dict[str, Any]:
+        logger.info(
+            "[RuntimeManager] _send_message start: session_id=%s source=%s text=%.100s",
+            session_id,
+            source,
+            text,
+        )
         runtime = await self._ensure_runtime(session_id, restore=True)
         if runtime is None:
             raise KeyError(session_id)
@@ -355,6 +398,7 @@ class SessionRuntimeManager:
             requested_skill_name=requested_skill_name,
         )
         await self._wait_for_runtime(runtime)
+        logger.info("[RuntimeManager] _send_message done: session_id=%s", session_id)
         return self._build_turn_response(runtime, turn_result.message, turn_result.duration_seconds)
 
     async def _schedule_message(
@@ -544,6 +588,7 @@ class SessionRuntimeManager:
         *,
         topics: Optional[list[str]] = None,
     ) -> EventStreamHandle:
+        logger.info("[RuntimeManager] _open_event_stream start: session_id=%s topics=%s", session_id, topics)
         runtime = await self._ensure_runtime(session_id, restore=True)
         if runtime is None:
             raise KeyError(session_id)
@@ -565,15 +610,19 @@ class SessionRuntimeManager:
             "queue": event_queue,
             "unsubscribe": unsubscribe,
         }
+        logger.info("[RuntimeManager] _open_event_stream done: session_id=%s stream_id=%s", session_id, stream_id)
         return EventStreamHandle(stream_id=stream_id, session_id=runtime.session_id, events=event_queue)
 
     async def _close_event_stream(self, stream_id: str) -> None:
+        logger.info("[RuntimeManager] _close_event_stream start: stream_id=%s", stream_id)
         stream = self._streams.pop(stream_id, None)
         if stream is None:
+            logger.info("[RuntimeManager] _close_event_stream noop: stream_id=%s", stream_id)
             return
         unsubscribe = stream.get("unsubscribe")
         if callable(unsubscribe):
             unsubscribe()
+        logger.info("[RuntimeManager] _close_event_stream done: stream_id=%s", stream_id)
 
     async def _ensure_runtime(self, session_id: str, *, restore: bool) -> Any | None:
         runtime = self._runtimes.get(session_id)
@@ -620,12 +669,84 @@ class SessionRuntimeManager:
         await self._wait_for_runtime(runtime)
         return self._build_turn_response(runtime, turn_result.message, turn_result.duration_seconds, job_id=job.job_id)
 
-    async def _wait_for_runtime(self, runtime: Any) -> None:
+    async def _wait_for_runtime(self, runtime: Any, *, timeout: float = 5.0) -> None:
         wait_for_background_tasks = getattr(runtime, "wait_for_background_tasks", None)
         if callable(wait_for_background_tasks):
             maybe_wait = wait_for_background_tasks()
             if asyncio.iscoroutine(maybe_wait) or isinstance(maybe_wait, asyncio.Future):
-                await maybe_wait
+                try:
+                    await asyncio.wait_for(maybe_wait, timeout=timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "_wait_for_runtime timed out after %.1fs for session_id=%s; "
+                        "background tasks may still be running",
+                        timeout,
+                        getattr(runtime, "session_id", "?"),
+                    )
+                    # Best-effort: dump pending runtime tasks and attempt cancellation to unblock
+                    # the manager loop for subsequent channel requests.
+                    self._log_runtime_tasks(runtime)
+                    self._cancel_runtime_tasks(runtime)
+
+    def _log_thread_stacks(self) -> None:
+        """Log all thread stacks to help diagnose runtime manager timeouts."""
+        current_frames = sys._current_frames()
+        for thread in threading.enumerate():
+            frame = current_frames.get(thread.ident)
+            if frame is None:
+                continue
+            stack_text = "".join(traceback.format_stack(frame))
+            logger.error(
+                "[RuntimeManager] thread dump: name=%s ident=%s alive=%s\n%s",
+                thread.name,
+                thread.ident,
+                thread.is_alive(),
+                stack_text,
+            )
+        for runtime in list(self._runtimes.values()):
+            self._log_runtime_tasks(runtime)
+
+    def _log_runtime_tasks(self, runtime: Any) -> None:
+        """Log pending asyncio tasks tracked by SessionRuntime (if any)."""
+        tasks = getattr(runtime, "_active_tasks", None)
+        if not tasks:
+            return
+        try:
+            session_id = getattr(runtime, "session_id", "?")
+            logger.error("[RuntimeManager] runtime pending tasks: session_id=%s count=%d", session_id, len(tasks))
+            for task in list(tasks):
+                if task.done():
+                    continue
+                stack = task.get_stack(limit=20)
+                if stack:
+                    # Each frame is a FrameType; use format_stack for readable output.
+                    stack_text = "".join(traceback.format_stack(stack[-1], limit=20))
+                else:
+                    stack_text = "(no stack)"
+                logger.error(
+                    "[RuntimeManager] pending task: session_id=%s task=%r cancelled=%s\n%s",
+                    session_id,
+                    task,
+                    task.cancelled(),
+                    stack_text,
+                )
+        except Exception as exc:
+            logger.error("[RuntimeManager] failed to log runtime tasks: %s", exc)
+
+    def _cancel_runtime_tasks(self, runtime: Any) -> None:
+        """Best-effort cancel of runtime active tasks to avoid wedging the manager loop."""
+        tasks = getattr(runtime, "_active_tasks", None)
+        if not tasks:
+            return
+        session_id = getattr(runtime, "session_id", "?")
+        for task in list(tasks):
+            if task.done():
+                continue
+            try:
+                task.cancel()
+                logger.warning("[RuntimeManager] cancelled pending task: session_id=%s task=%r", session_id, task)
+            except Exception as exc:
+                logger.warning("[RuntimeManager] failed to cancel task: session_id=%s task=%r err=%s", session_id, task, exc)
 
     def _build_turn_response(
         self,

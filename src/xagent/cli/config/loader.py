@@ -41,7 +41,12 @@ def add_model(config: AppConfig, model: ModelConfig, *, make_default: bool = Fal
         raise ValueError(f"Model '{model.name}' already exists.")
     models = [*config.models, model]
     default_model = model.name if make_default else config.default_model
-    return AppConfig(default_model=default_model, models=models)
+    return AppConfig(
+        default_model=default_model,
+        max_model_calls=config.max_model_calls,
+        log_level=config.log_level,
+        models=models,
+    )
 
 
 def remove_model(config: AppConfig, model_name: str) -> AppConfig:
@@ -53,13 +58,23 @@ def remove_model(config: AppConfig, model_name: str) -> AppConfig:
     default_model = config.default_model
     if default_model == model_name:
         default_model = remaining[0].name
-    return AppConfig(default_model=default_model, models=remaining)
+    return AppConfig(
+        default_model=default_model,
+        max_model_calls=config.max_model_calls,
+        log_level=config.log_level,
+        models=remaining,
+    )
 
 
 def set_default_model_name(config: AppConfig, model_name: str) -> AppConfig:
     if not any(model.name == model_name for model in config.models):
         raise ValueError(f"Model '{model_name}' is not defined in config.")
-    return AppConfig(default_model=model_name, models=config.models)
+    return AppConfig(
+        default_model=model_name,
+        max_model_calls=config.max_model_calls,
+        log_level=config.log_level,
+        models=config.models,
+    )
 
 
 def default_base_url(provider: str) -> str:
@@ -86,6 +101,8 @@ def dump_config_yaml(config: AppConfig) -> str:
     lines = [
         f'default_model: "{_quote_yaml(config.default_model)}"',
         f"max_model_calls: {config.max_model_calls}",
+        "# Supported log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL",
+        f'log_level: "{config.log_level}"',
         "models:",
     ]
     for model in config.models:
@@ -130,6 +147,11 @@ def _parse_config_yaml(raw: str) -> Dict[str, Any]:
                 raise ValueError(f"Invalid max_model_calls value: {raw_value}") from exc
             continue
 
+        if stripped.startswith("log_level:"):
+            _, value = stripped.split(":", 1)
+            data["log_level"] = _parse_yaml_scalar(value.strip()).upper()
+            continue
+
         if stripped.startswith("- "):
             if not in_models:
                 raise ValueError("List item found before models: section")
@@ -142,7 +164,12 @@ def _parse_config_yaml(raw: str) -> Dict[str, Any]:
             continue
 
         if current_model is None:
-            raise ValueError(f"Unexpected YAML line: {original_line}")
+            # Be strict about YAML structure but allow future top-level scalar keys.
+            # Known keys are parsed above; unknown keys are stored as strings and
+            # ignored by the pydantic model (extra fields) to preserve forward compatibility.
+            key, value = _split_yaml_key_value(stripped)
+            data[key] = _parse_yaml_scalar(value)
+            continue
 
         key, value = _split_yaml_key_value(stripped)
         current_model[key] = _parse_yaml_scalar(value)

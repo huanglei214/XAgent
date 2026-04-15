@@ -177,8 +177,18 @@ class SessionRuntime:
         self._unsubscribe_scheduled_job()
 
     async def wait_for_background_tasks(self) -> None:
-        while self._active_tasks:
-            await asyncio.gather(*list(self._active_tasks))
+        """Wait for background tasks spawned by this runtime.
+
+        This must not busy-loop: in some race cases the task set can change between
+        the truthy check and materializing the list, which can starve the event loop
+        and prevent timeouts/cancellation from being processed.
+        """
+        while True:
+            tasks = [task for task in self._active_tasks if not task.done()]
+            if not tasks:
+                break
+            # Preserve the first exception semantics while ensuring the loop yields.
+            await asyncio.gather(*tasks)
         if self.auto_compact_service is not None:
             await self.auto_compact_service.wait_for_all()
 

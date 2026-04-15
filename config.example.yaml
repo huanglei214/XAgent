@@ -1,6 +1,9 @@
 # Example XAgent project configuration
 # Copy relevant values into .xagent/config.yaml if you want a fresh local config.
 default_model: "ep-your-ark-endpoint-id"
+max_model_calls: 100
+# Supported log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level: "WARNING"
 models:
   - name: "ep-your-ark-endpoint-id"
     provider: "ark"
