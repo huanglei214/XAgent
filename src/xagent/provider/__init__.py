@@ -1,6 +1,6 @@
-from xagent.community.anthropic.provider import AnthropicProvider
-from xagent.community.ark.provider import ArkProvider
-from xagent.community.openai.provider import OpenAIChatProvider
+from xagent.provider.anthropic.provider import AnthropicProvider
+from xagent.provider.ark.provider import ArkProvider
+from xagent.provider.openai.provider import OpenAIChatProvider
 from xagent.foundation.models import ModelConfig, ModelProvider
 
 

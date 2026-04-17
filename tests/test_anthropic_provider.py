@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from xagent.cli.config.schema import ModelConfig
-from xagent.community.anthropic.provider import (
+from xagent.provider.anthropic.provider import (
     AnthropicProvider,
     _from_anthropic_message,
     _to_anthropic_request_kwargs,
@@ -172,7 +172,7 @@ class AnthropicProviderTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):
-            with patch("xagent.community.anthropic.provider.AsyncAnthropic", lambda **_: fake_client):
+            with patch("xagent.provider.anthropic.provider.AsyncAnthropic", lambda **_: fake_client):
                 provider = AnthropicProvider(config)
                 message = await provider.complete(request)
 
@@ -214,7 +214,7 @@ class AnthropicProviderTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):
-            with patch("xagent.community.anthropic.provider.AsyncAnthropic", lambda **_: fake_client):
+            with patch("xagent.provider.anthropic.provider.AsyncAnthropic", lambda **_: fake_client):
                 provider = AnthropicProvider(config)
                 snapshots = [
                     snapshot
@@ -225,4 +225,3 @@ class AnthropicProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshots[-1].content[0].text, "Hello")
         self.assertEqual(snapshots[-1].content[1].name, "read_file")
         self.assertEqual(snapshots[-1].content[1].input, {"path": "README.md"})
-

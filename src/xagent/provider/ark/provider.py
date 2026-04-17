@@ -1,4 +1,4 @@
-from xagent.community.openai.provider import OpenAIChatProvider
+from xagent.provider.openai.provider import OpenAIChatProvider
 
 
 class ArkProvider(OpenAIChatProvider):

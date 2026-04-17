@@ -20,7 +20,7 @@ from xagent.cli.tui.render import print_error, print_info, print_panel, print_to
 from xagent.cli.config.env import load_project_env
 from xagent.cli.config.loader import load_config, resolve_default_model
 from xagent.foundation.messages import ToolUsePart, message_text
-from xagent.community import create_provider
+from xagent.provider import create_provider
 from xagent.agent.core.loop import AgentAborted
 from xagent.agent.traces import TraceMiddleware
 from xagent.foundation.events import InMemoryMessageBus
