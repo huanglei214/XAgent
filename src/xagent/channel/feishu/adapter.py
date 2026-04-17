@@ -6,12 +6,12 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from xagent.agent.runtime.channel_bridge import ChannelRuntimeBridge
+from xagent.agent.runtime import InboundMessage, ManagedRuntimeBoundary, OutboundMessage
 from xagent.channel.access import StaticChannelAccessPolicy
 from xagent.channel.feishu.client import FeishuApiClient, FeishuLongConnectionClient
 from xagent.channel.feishu.config import FeishuConfig
 from xagent.channel.models import ChannelEnvelope, ChannelIdentity
-from xagent.channel.session_routing import build_conversation_key, is_group_message_allowed
+from xagent.channel.session_routing import is_group_message_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class FeishuChannelAdapter:
     def __init__(
         self,
         *,
-        bridge: ChannelRuntimeBridge,
+        boundary: ManagedRuntimeBoundary,
         config: FeishuConfig,
         api_client: FeishuApiClient | None = None,
         long_connection_factory: Callable[
@@ -87,7 +87,7 @@ class FeishuChannelAdapter:
         ]
         | None = None,
     ) -> None:
-        self.bridge = bridge
+        self.boundary = boundary
         self.config = config
         self.api_client = api_client or FeishuApiClient(config)
         self.long_connection_factory = long_connection_factory or (
@@ -228,23 +228,57 @@ class FeishuChannelAdapter:
             return
 
         logger.info(
-            "[Feishu] Dispatching text for chat_id=%s, conversation_key=%s",
+            "[Feishu] Dispatching text for chat_id=%s via runtime boundary",
             envelope.identity.chat_id,
-            build_conversation_key(envelope).as_key(),
         )
         sink = FeishuTextStreamSink(
             self.api_client,
             envelope.identity.chat_id,
             partial_emit_chars=self.config.partial_emit_chars,
         )
-        conversation_key = build_conversation_key(envelope)
-        self.bridge.dispatch_text(
-            conversation_key,
-            envelope.text,
-            sink,
+        inbound = InboundMessage(
+            content=envelope.text,
             source="channel.feishu",
+            channel=envelope.channel,
+            sender_id=envelope.identity.user_id,
+            chat_id=envelope.identity.chat_id,
+            reply_to=str(envelope.metadata.get("message_id") or "") or None,
+            metadata={
+                **dict(envelope.metadata),
+                "chat_type": envelope.identity.chat_type,
+            },
         )
+        outbound_queue, unsubscribe = self.boundary.open_response_stream(inbound)
+        try:
+            self._drain_outbound_queue(
+                outbound_queue,
+                sink,
+                correlation_id=inbound.correlation_id,
+            )
+        finally:
+            unsubscribe()
         logger.info("[Feishu] Dispatch completed for chat_id=%s", envelope.identity.chat_id)
+
+    def _drain_outbound_queue(
+        self,
+        outbound_queue: "queue.Queue[OutboundMessage]",
+        sink: FeishuTextStreamSink,
+        *,
+        correlation_id: str,
+    ) -> None:
+        while True:
+            outbound = outbound_queue.get(timeout=30)
+            if outbound.correlation_id != correlation_id:
+                continue
+            if outbound.kind == "delta":
+                sink.on_text(outbound.content)
+                continue
+            if outbound.kind == "completed":
+                sink.on_complete(outbound.content)
+                return
+            if outbound.kind == "failed":
+                sink.on_error(outbound.error or "Unknown runtime failure.")
+                return
 
     def _event_to_envelope(self, event: Any) -> ChannelEnvelope | None:
         payload = getattr(event, "event", None)
@@ -289,6 +323,7 @@ class FeishuChannelAdapter:
             metadata={
                 "event_id": getattr(getattr(event, "header", None), "event_id", None),
                 "message_id": getattr(message, "message_id", None),
+                "chat_type": getattr(message, "chat_type", None),
             },
         )
 

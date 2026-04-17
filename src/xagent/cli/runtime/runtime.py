@@ -9,7 +9,13 @@ import typer
 
 from xagent.agent.memory import create_runtime_memory
 from xagent.agent.policies import ApprovalMiddleware, ApprovalStore
-from xagent.agent.runtime import SessionRuntime, create_workspace_agent
+from xagent.agent.runtime import (
+    LocalRuntimeBoundary,
+    ManagedRuntimeBoundary,
+    SessionRuntime,
+    SessionRuntimeManager,
+    create_workspace_agent,
+)
 from xagent.cli.tui.render import print_error, print_info, print_panel, print_tool_use
 from xagent.cli.config.env import load_project_env
 from xagent.cli.config.loader import load_config, resolve_default_model
@@ -87,6 +93,37 @@ def build_session_runtime(
         memory=runtime_memory,
     )
     return message_bus, runtime
+
+
+def build_local_runtime_boundary(
+    agent,
+    session_id: Optional[str] = None,
+    *,
+    cwd: Optional[str] = None,
+    bus: Optional[InMemoryMessageBus] = None,
+    memory_bundle=None,
+):
+    _, runtime = build_session_runtime(
+        agent,
+        session_id=session_id,
+        cwd=cwd,
+        bus=bus,
+        memory_bundle=memory_bundle,
+    )
+    return LocalRuntimeBoundary(runtime=runtime)
+
+
+def build_managed_runtime_boundary(
+    cwd: str,
+    *,
+    approval_prompt_fn: Optional[Callable[[str], Any]] = None,
+):
+    manager = SessionRuntimeManager(
+        cwd=cwd,
+        agent_factory=lambda: build_runtime_agent(cwd, approval_prompt_fn=approval_prompt_fn),
+        runtime_factory=build_session_runtime,
+    )
+    return ManagedRuntimeBoundary(manager=manager)
 
 
 def render_tool_use(tool_use: ToolUsePart) -> None:

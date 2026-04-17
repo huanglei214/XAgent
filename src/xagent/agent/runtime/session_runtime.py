@@ -115,9 +115,11 @@ class SessionRuntime:
         *,
         source: str = "channel",
         requested_skill_name: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> TurnResult:
-        self._request_counter += 1
-        request_id = f"{self.session_id}:{self._request_counter}"
+        if request_id is None:
+            self._request_counter += 1
+            request_id = f"{self.session_id}:{self._request_counter}"
         loop = asyncio.get_running_loop()
         future: asyncio.Future[TurnResult] = loop.create_future()
         self._pending_turns[request_id] = future

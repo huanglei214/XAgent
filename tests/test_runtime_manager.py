@@ -54,6 +54,24 @@ def _build_test_runtime(agent, *, session_id=None, cwd=None, bus=None):
 
 
 class SessionRuntimeManagerTests(unittest.TestCase):
+    def test_manager_resolves_and_reuses_session_key_routes(self) -> None:
+        from xagent.agent.runtime.manager import SessionRuntimeManager
+
+        with TemporaryDirectory() as tmp:
+            manager = SessionRuntimeManager(
+                cwd=tmp,
+                agent_factory=_ManagerAgent,
+                runtime_factory=_build_test_runtime,
+            )
+            try:
+                session_id = manager.resolve_session_id("feishu:user:user-1")
+                resolved_again = manager.resolve_session_id("feishu:user:user-1")
+
+                self.assertEqual(resolved_again, session_id)
+                self.assertIsNotNone(manager.get_session_status(session_id))
+            finally:
+                manager.close()
+
     def test_manager_creates_sends_and_lists_sessions(self) -> None:
         from xagent.agent.runtime.manager import SessionRuntimeManager
 

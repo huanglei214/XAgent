@@ -6,10 +6,11 @@ from hashlib import sha1
 from tempfile import TemporaryDirectory
 
 from xagent.agent.memory import create_runtime_memory
-from xagent.agent.runtime import SessionRuntime
+from xagent.agent.runtime import ManagedRuntimeBoundary, SessionRuntime
 from xagent.foundation.events import InMemoryMessageBus
 from xagent.foundation.messages import Message, TextPart
-from xagent.gateway.http import GatewayRuntimeManager, build_gateway_handler
+from xagent.agent.runtime.manager import SessionRuntimeManager
+from xagent.gateway.http import build_gateway_handler
 
 
 class _GatewayAgent:
@@ -59,14 +60,19 @@ def _build_test_runtime(agent, *, session_id=None, cwd=None, bus=None):
     return message_bus, runtime
 
 
-class GatewayRuntimeManagerTests(unittest.TestCase):
+def _build_gateway_boundary(tmp: str) -> ManagedRuntimeBoundary:
+    manager = SessionRuntimeManager(
+        cwd=tmp,
+        agent_factory=_GatewayAgent,
+        runtime_factory=_build_test_runtime,
+    )
+    return ManagedRuntimeBoundary(manager=manager)
+
+
+class GatewayBoundaryTests(unittest.TestCase):
     def test_manager_creates_session_sends_message_and_reports_status(self) -> None:
         with TemporaryDirectory() as tmp:
-            manager = GatewayRuntimeManager(
-                cwd=tmp,
-                agent_factory=_GatewayAgent,
-                runtime_factory=_build_test_runtime,
-            )
+            manager = _build_gateway_boundary(tmp)
             try:
                 session_id = manager.create_session()
                 self.assertIsInstance(session_id, str)
@@ -90,11 +96,7 @@ class GatewayRuntimeManagerTests(unittest.TestCase):
 
     def test_manager_returns_none_for_unknown_session(self) -> None:
         with TemporaryDirectory() as tmp:
-            manager = GatewayRuntimeManager(
-                cwd=tmp,
-                agent_factory=_GatewayAgent,
-                runtime_factory=_build_test_runtime,
-            )
+            manager = _build_gateway_boundary(tmp)
             try:
                 self.assertIsNone(manager.get_session_status("missing"))
                 self.assertIsNone(manager.get_session_messages("missing"))
@@ -107,11 +109,7 @@ class GatewayRuntimeManagerTests(unittest.TestCase):
 class GatewayHttpServerTests(unittest.TestCase):
     def test_http_server_exposes_session_endpoints(self) -> None:
         with TemporaryDirectory() as tmp:
-            manager = GatewayRuntimeManager(
-                cwd=tmp,
-                agent_factory=_GatewayAgent,
-                runtime_factory=_build_test_runtime,
-            )
+            manager = _build_gateway_boundary(tmp)
             try:
                 handler_cls = build_gateway_handler(manager)
 

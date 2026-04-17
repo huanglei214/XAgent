@@ -1,4 +1,6 @@
 from xagent.cli.runtime.runtime import (
+    build_local_runtime_boundary,
+    build_managed_runtime_boundary,
     build_runtime_agent,
     build_session_runtime,
     format_runtime_error,
@@ -12,6 +14,8 @@ from xagent.cli.runtime.runtime import (
 )
 
 __all__ = [
+    "build_local_runtime_boundary",
+    "build_managed_runtime_boundary",
     "build_runtime_agent",
     "build_session_runtime",
     "format_runtime_error",

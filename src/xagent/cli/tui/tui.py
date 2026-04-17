@@ -32,9 +32,10 @@ from xagent.agent.tools.workspace.ask_user_question import (
 )
 from xagent.agent.tool_result_runtime import summarize_tool_result_for_ui
 from xagent.agent.core import AgentAborted
+from xagent.agent.runtime import InboundMessage
 from xagent.cli.runtime.runtime import (
+    build_local_runtime_boundary,
     build_runtime_agent,
-    build_session_runtime,
     format_runtime_error,
     get_runtime_status,
     make_external_path_approval_handler,
@@ -917,7 +918,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
     agent = build_runtime_agent(cwd, ask_user_question=_ask_user_questions)
     agent.runtime_mode = "chat"
 
-    bus, session_runtime = build_session_runtime(
+    session_runtime = build_local_runtime_boundary(
         agent,
         cwd=cwd,
     )
@@ -1073,7 +1074,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
     def _handle_assistant_delta_event(event) -> None:
         if event.session_id != session_runtime.session_id:
             return
-        new_text = str(event.payload.get("text", ""))
+        new_text = str(event.content or "")
         if not new_text.strip():
             return
         ui_state["streaming_text"] = new_text
@@ -1089,7 +1090,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
             ui_state["streaming_text"] = ""
             _invalidate_prompt()
 
-        tool_use = event.payload.get("tool_use")
+        tool_use = event.metadata.get("tool_use")
         if tool_use is None:
             return
         line = Text()
@@ -1101,7 +1102,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
         if event.session_id != session_runtime.session_id:
             return
         _clear_thinking()
-        result = event.payload.get("result")
+        result = event.metadata.get("result")
         if result is None:
             return
         marker = "✖" if result.is_error else "✓"
@@ -1125,8 +1126,8 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
         _print_runtime_block(
             "AutoCompact",
             [
-                f"checkpointed {event.payload.get('checkpointed_message_count', 0)} messages",
-                f"kept {event.payload.get('recent_message_count', 0)} recent messages",
+                f"checkpointed {event.metadata.get('checkpointed_message_count', 0)} messages",
+                f"kept {event.metadata.get('recent_message_count', 0)} recent messages",
             ],
         )
         _invalidate_prompt()
@@ -1140,13 +1141,13 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
         if isinstance(middleware, ApprovalMiddleware):
             middleware.prompt_fn = _prompt_modal
 
-    if bus is not None:
-        bus.subscribe("assistant.delta", _handle_assistant_delta_event)
-        bus.subscribe("tool.called", _handle_tool_called_event)
-        bus.subscribe("tool.finished", _handle_tool_finished_event)
-        bus.subscribe("session.turn.completed", _handle_turn_terminal_event)
-        bus.subscribe("session.turn.failed", _handle_turn_terminal_event)
-        bus.subscribe("memory.compaction.completed", _handle_compaction_completed_event)
+    session_runtime.out_msg_bus.subscribe(_handle_assistant_delta_event, predicate=lambda message: message.kind == "delta")
+    session_runtime.out_msg_bus.subscribe(_handle_tool_called_event, predicate=lambda message: message.kind == "tool_called")
+    session_runtime.out_msg_bus.subscribe(_handle_tool_finished_event, predicate=lambda message: message.kind == "tool_finished")
+    session_runtime.out_msg_bus.subscribe(_handle_turn_terminal_event, predicate=lambda message: message.kind in {"completed", "failed"})
+    session_runtime.out_msg_bus.subscribe(
+        _handle_compaction_completed_event, predicate=lambda message: message.kind == "compaction_completed"
+    )
 
     with patch_stdout(raw=True):
         prompt_task = asyncio.create_task(_prompt_once())
@@ -1252,11 +1253,16 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
 
                 asyncio.create_task(animate_thinking())
 
-                final_turn = await session_runtime.publish_user_message(
-                    text,
+                inbound = InboundMessage(
+                    content=text,
                     source="tui",
+                    channel="tui",
+                    sender_id="tui",
+                    chat_id=session_runtime.session_id,
                     requested_skill_name=requested_skill_name,
+                    session_key_override=session_runtime.session_id,
                 )
+                outbound = await session_runtime.submit_and_wait(inbound)
 
                 _clear_thinking()
 
@@ -1265,12 +1271,14 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
                     _print_assistant_text(ui_state["streaming_text"])
                     ui_state["streaming_text"] = ""
                     _invalidate_prompt()
-                elif not message_text(final_turn.message).strip():
+                elif not str(outbound.content or "").strip():
                     console.print("[italic dim](no output; inspect `xagent trace latest` for the full event trail)[/italic dim]")
                     console.print()
 
                 token_count = sum(len(message_text(m).split()) for m in agent.messages)
-                console.print(f"[italic dim]Completed in {final_turn.duration_seconds:.2f}s[/italic dim]")
+                if outbound.kind == "failed":
+                    raise RuntimeError(outbound.error or "Runtime execution failed.")
+                console.print(f"[italic dim]Completed in {float(outbound.metadata.get('duration_seconds') or 0.0):.2f}s[/italic dim]")
                 console.print()
 
             except AgentAborted:

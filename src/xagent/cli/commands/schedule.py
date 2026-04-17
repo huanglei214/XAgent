@@ -7,8 +7,7 @@ from typing import Optional
 
 import typer
 
-from xagent.agent.runtime import SessionRuntimeManager
-from xagent.cli.runtime import build_runtime_agent, build_session_runtime, render_final_message
+from xagent.cli.runtime import build_managed_runtime_boundary, render_final_message
 from xagent.cli.tui.render import print_error, print_info
 from xagent.foundation.messages import Message
 
@@ -32,16 +31,11 @@ async def run_scheduled_once(
     requested_skill_name: Optional[str] = None,
 ) -> None:
     cwd = str(Path.cwd())
-    manager = SessionRuntimeManager(
-        cwd=cwd,
-        agent_factory=lambda: build_runtime_agent(cwd),
-        runtime_factory=build_session_runtime,
-    )
+    manager = build_managed_runtime_boundary(cwd)
     try:
-        if session_id is None:
-            session_id = manager.create_session()
+        target_session_id = session_id or manager.create_session()
         job = manager.schedule_message(
-            session_id,
+            target_session_id,
             text,
             delay_seconds=delay_seconds,
             requested_skill_name=requested_skill_name,
@@ -56,12 +50,8 @@ async def run_scheduled_once(
         manager.close()
 
 
-def _build_manager(cwd: str) -> SessionRuntimeManager:
-    return SessionRuntimeManager(
-        cwd=cwd,
-        agent_factory=lambda: build_runtime_agent(cwd),
-        runtime_factory=build_session_runtime,
-    )
+def _build_manager(cwd: str):
+    return build_managed_runtime_boundary(cwd)
 
 
 async def run_scheduler_service(*, poll_interval_seconds: float = 1.0) -> None:

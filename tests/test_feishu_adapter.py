@@ -1,4 +1,5 @@
 import json
+import queue
 import threading
 import time
 import unittest
@@ -9,15 +10,34 @@ from xagent.channel.feishu.config import FeishuConfig
 from xagent.channel.models import GroupIngressMode
 
 
-class _Bridge:
+class _Boundary:
     def __init__(self) -> None:
         self.calls = []
+        self.last_queue = None
 
-    def dispatch_text(self, conversation_key, text, sink, *, requested_skill_name=None, source="channel") -> str:
-        self.calls.append((conversation_key, text, source))
-        sink.on_text("hello")
-        sink.on_complete(f"done:{text}")
-        return "session-1"
+    def open_response_stream(self, inbound, *, terminal_only: bool = False):
+        event_queue = queue.Queue()
+        self.last_queue = event_queue
+        self.calls.append(("open", inbound, terminal_only))
+        self.publish_nowait(inbound)
+
+        def _unsubscribe():
+            return None
+
+        return event_queue, _unsubscribe
+
+    def publish_nowait(self, inbound) -> None:
+        self.calls.append(("publish", inbound))
+        self.last_queue.put_nowait(
+            type("Outbound", (), {"correlation_id": inbound.correlation_id, "kind": "delta", "content": "hello", "error": None})()
+        )
+        self.last_queue.put_nowait(
+            type(
+                "Outbound",
+                (),
+                {"correlation_id": inbound.correlation_id, "kind": "completed", "content": f"done:{inbound.content}", "error": None},
+            )()
+        )
 
 
 class _ApiClient:
@@ -79,36 +99,38 @@ class FeishuAdapterTests(unittest.TestCase):
         )
 
     def test_private_message_dispatches_and_streams_visible_text(self) -> None:
-        bridge = _Bridge()
+        boundary = _Boundary()
         api_client = _ApiClient()
-        adapter = FeishuChannelAdapter(bridge=bridge, config=self._make_config(), api_client=api_client)
+        adapter = FeishuChannelAdapter(boundary=boundary, config=self._make_config(), api_client=api_client)
         payload = self._event(text="hello", chat_type="p2p")
 
         adapter._handle_envelope(adapter._event_to_envelope(payload))
 
-        self.assertEqual(len(bridge.calls), 1)
-        conversation_key, text, source = bridge.calls[0]
-        self.assertEqual(conversation_key.as_key(), "feishu:user:user-1")
-        self.assertEqual(text, "hello")
-        self.assertEqual(source, "channel.feishu")
+        self.assertEqual([call[0] for call in boundary.calls], ["open", "publish"])
+        inbound = boundary.calls[0][1]
+        self.assertEqual(inbound.channel, "feishu")
+        self.assertEqual(inbound.sender_id, "user-1")
+        self.assertEqual(inbound.chat_id, "chat-1")
+        self.assertEqual(inbound.content, "hello")
+        self.assertEqual(inbound.source, "channel.feishu")
         self.assertEqual(api_client.sent_messages, [("chat-1", "hello")])
         self.assertEqual(api_client.updated_messages, [("msg-1", "done:hello")])
 
     def test_group_message_requires_mention_by_default(self) -> None:
-        bridge = _Bridge()
+        boundary = _Boundary()
         api_client = _ApiClient()
-        adapter = FeishuChannelAdapter(bridge=bridge, config=self._make_config(), api_client=api_client)
+        adapter = FeishuChannelAdapter(boundary=boundary, config=self._make_config(), api_client=api_client)
         payload = self._event(text="hello", chat_type="group", mentions=[])
 
         adapter._handle_envelope(adapter._event_to_envelope(payload))
 
-        self.assertEqual(bridge.calls, [])
+        self.assertEqual(boundary.calls, [])
         self.assertEqual(api_client.sent_messages, [])
 
     def test_group_message_dispatches_when_bot_is_mentioned(self) -> None:
-        bridge = _Bridge()
+        boundary = _Boundary()
         api_client = _ApiClient()
-        adapter = FeishuChannelAdapter(bridge=bridge, config=self._make_config(), api_client=api_client)
+        adapter = FeishuChannelAdapter(boundary=boundary, config=self._make_config(), api_client=api_client)
         payload = self._event(
             text="hello",
             chat_type="group",
@@ -117,27 +139,26 @@ class FeishuAdapterTests(unittest.TestCase):
 
         adapter._handle_envelope(adapter._event_to_envelope(payload))
 
-        self.assertEqual(len(bridge.calls), 1)
-        self.assertEqual(bridge.calls[0][0].as_key(), "feishu:chat:chat-1")
+        self.assertEqual(boundary.calls[1][1].chat_id, "chat-1")
 
     def test_denied_message_sends_denial_response(self) -> None:
-        bridge = _Bridge()
+        boundary = _Boundary()
         api_client = _ApiClient()
         config = self._make_config(allow_all=False, allowed_user_ids=("allowed-user",), deny_message="nope")
-        adapter = FeishuChannelAdapter(bridge=bridge, config=config, api_client=api_client)
+        adapter = FeishuChannelAdapter(boundary=boundary, config=config, api_client=api_client)
         payload = self._event(text="hello", chat_type="p2p")
 
         adapter._handle_envelope(adapter._event_to_envelope(payload))
 
-        self.assertEqual(bridge.calls, [])
+        self.assertEqual(boundary.calls, [])
         self.assertEqual(api_client.sent_messages, [("chat-1", "nope")])
         self.assertEqual(api_client.updated_messages, [])
 
     def test_group_message_dispatches_when_all_text_is_enabled(self) -> None:
-        bridge = _Bridge()
+        boundary = _Boundary()
         api_client = _ApiClient()
         adapter = FeishuChannelAdapter(
-            bridge=bridge,
+            boundary=boundary,
             config=self._make_config(group_mode=GroupIngressMode.ALL_TEXT),
             api_client=api_client,
         )
@@ -145,16 +166,15 @@ class FeishuAdapterTests(unittest.TestCase):
 
         adapter._handle_envelope(adapter._event_to_envelope(payload))
 
-        self.assertEqual(len(bridge.calls), 1)
-        self.assertEqual(bridge.calls[0][0].as_key(), "feishu:chat:chat-1")
+        self.assertEqual(boundary.calls[1][1].chat_id, "chat-1")
 
     def test_serve_forever_fails_fast_on_startup_failure(self) -> None:
-        bridge = _Bridge()
+        boundary = _Boundary()
         api_client = _ApiClient()
         client = _LongClient()
         client.error = ConnectionError("boom")
         adapter = FeishuChannelAdapter(
-            bridge=bridge,
+            boundary=boundary,
             config=self._make_config(),
             api_client=api_client,
             long_connection_factory=lambda cfg, handler: client,
@@ -167,11 +187,11 @@ class FeishuAdapterTests(unittest.TestCase):
         self.assertTrue(client.closed)
 
     def test_serve_forever_uses_official_long_connection_client(self) -> None:
-        bridge = _Bridge()
+        boundary = _Boundary()
         api_client = _ApiClient()
         client = _LongClient()
         adapter = FeishuChannelAdapter(
-            bridge=bridge,
+            boundary=boundary,
             config=self._make_config(),
             api_client=api_client,
             long_connection_factory=lambda cfg, handler: client,
@@ -183,67 +203,77 @@ class FeishuAdapterTests(unittest.TestCase):
         self.assertIsNone(adapter.status.last_error)
 
     def test_events_for_same_chat_are_queued_and_processed_in_order(self) -> None:
-        class _BlockingBridge(_Bridge):
+        class _BlockingBoundary(_Boundary):
             def __init__(self) -> None:
                 super().__init__()
                 self.entered = []
                 self.release_first = threading.Event()
 
-            def dispatch_text(self, conversation_key, text, sink, *, requested_skill_name=None, source="channel") -> str:
-                self.entered.append(text)
-                if text == "first":
+            def publish_nowait(self, inbound) -> None:
+                self.entered.append(inbound.content)
+                if inbound.content == "first":
                     self.release_first.wait(timeout=1)
-                sink.on_complete(f"done:{text}")
-                return "session-1"
+                self.last_queue.put_nowait(
+                    type(
+                        "Outbound",
+                        (),
+                        {"correlation_id": inbound.correlation_id, "kind": "completed", "content": f"done:{inbound.content}", "error": None},
+                    )()
+                )
 
-        bridge = _BlockingBridge()
+        boundary = _BlockingBoundary()
         api_client = _ApiClient()
-        adapter = FeishuChannelAdapter(bridge=bridge, config=self._make_config(), api_client=api_client)
+        adapter = FeishuChannelAdapter(boundary=boundary, config=self._make_config(), api_client=api_client)
 
         adapter._handle_sdk_event(self._event(text="first", chat_type="p2p"))
         time.sleep(0.05)
         adapter._handle_sdk_event(self._event(text="second", chat_type="p2p"))
         time.sleep(0.05)
 
-        self.assertEqual(bridge.entered, ["first"])
+        self.assertEqual(boundary.entered, ["first"])
 
-        bridge.release_first.set()
+        boundary.release_first.set()
         deadline = time.time() + 1
-        while time.time() < deadline and bridge.entered != ["first", "second"]:
+        while time.time() < deadline and boundary.entered != ["first", "second"]:
             time.sleep(0.01)
 
-        self.assertEqual(bridge.entered, ["first", "second"])
+        self.assertEqual(boundary.entered, ["first", "second"])
         adapter.close()
 
     def test_worker_recovers_after_message_handling_failure(self) -> None:
-        class _FlakyBridge(_Bridge):
+        class _FlakyBoundary(_Boundary):
             def __init__(self) -> None:
                 super().__init__()
                 self.fail_first = True
 
-            def dispatch_text(self, conversation_key, text, sink, *, requested_skill_name=None, source="channel") -> str:
-                self.calls.append((conversation_key, text, source))
+            def publish_nowait(self, inbound) -> None:
+                self.calls.append(("publish", inbound.content))
                 if self.fail_first:
                     self.fail_first = False
                     raise RuntimeError("boom")
-                sink.on_complete(f"done:{text}")
-                return "session-1"
+                self.last_queue.put_nowait(
+                    type(
+                        "Outbound",
+                        (),
+                        {"correlation_id": inbound.correlation_id, "kind": "completed", "content": f"done:{inbound.content}", "error": None},
+                    )()
+                )
 
-        bridge = _FlakyBridge()
+        boundary = _FlakyBoundary()
         api_client = _ApiClient()
-        adapter = FeishuChannelAdapter(bridge=bridge, config=self._make_config(), api_client=api_client)
+        adapter = FeishuChannelAdapter(boundary=boundary, config=self._make_config(), api_client=api_client)
 
         adapter._handle_sdk_event(self._event(text="first", chat_type="p2p"))
         deadline = time.time() + 1
-        while time.time() < deadline and len(bridge.calls) < 1:
+        while time.time() < deadline and len([call for call in boundary.calls if call[0] == "publish"]) < 1:
             time.sleep(0.01)
 
         adapter._handle_sdk_event(self._event(text="second", chat_type="p2p"))
         deadline = time.time() + 1
-        while time.time() < deadline and len(bridge.calls) < 2:
+        while time.time() < deadline and len([call for call in boundary.calls if call[0] == "publish"]) < 2:
             time.sleep(0.01)
 
-        self.assertEqual([call[1] for call in bridge.calls], ["first", "second"])
+        self.assertEqual([call[1] for call in boundary.calls if call[0] == "publish"], ["first", "second"])
         self.assertEqual(api_client.sent_messages, [("chat-1", "done:second")])
         self.assertEqual(adapter.status.last_error, "boom")
         adapter.close()

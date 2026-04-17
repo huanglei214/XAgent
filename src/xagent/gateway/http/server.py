@@ -8,11 +8,21 @@ import struct
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
-from xagent.gateway.http.manager import GatewayRuntimeManager
+from xagent.agent.runtime import InboundMessage
+from xagent.agent.runtime import ManagedRuntimeBoundary
 
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 TERMINAL_TOPICS = {"session.turn.completed", "session.turn.failed"}
+OUTBOUND_TOPIC_MAP = {
+    "delta": "assistant.delta",
+    "completed": "session.turn.completed",
+    "failed": "session.turn.failed",
+    "tool_called": "tool.called",
+    "tool_finished": "tool.finished",
+    "compaction_completed": "memory.compaction.completed",
+}
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload) -> None:
@@ -102,7 +112,25 @@ def _send_websocket_json(handler: BaseHTTPRequestHandler, payload: dict) -> None
     _send_websocket_frame(handler, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
 
-def build_gateway_handler(manager: GatewayRuntimeManager):
+def _outbound_to_event(message) -> dict:
+    topic = OUTBOUND_TOPIC_MAP.get(message.kind, message.kind)
+    payload: dict[str, object] = dict(message.metadata or {})
+    if message.kind == "delta":
+        payload["text"] = message.content
+    elif message.kind == "completed":
+        payload.setdefault("message", {"role": "assistant", "content": [{"type": "text", "text": message.content}], "text": message.content})
+        payload.setdefault("duration_seconds", message.metadata.get("duration_seconds") if message.metadata else None)
+    elif message.kind == "failed":
+        payload["error"] = message.error
+    return {
+        "topic": topic,
+        "session_id": message.session_id,
+        "source": message.source,
+        "payload": payload,
+    }
+
+
+def build_gateway_handler(manager: ManagedRuntimeBoundary):
     class GatewayHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -186,7 +214,7 @@ def build_gateway_handler(manager: GatewayRuntimeManager):
             parts = [part for part in parsed.path.split("/") if part]
 
             if parts == ["sessions"]:
-                session_id = manager.create_session()
+                session_id = manager.create_session(session_key=f"gateway:{uuid4().hex}")
                 _json_response(self, 201, {"session_id": session_id})
                 return
 
@@ -255,18 +283,38 @@ def build_gateway_handler(manager: GatewayRuntimeManager):
                 if not text:
                     _json_response(self, 400, {"error": "Field 'text' is required."})
                     return
-                try:
-                    response = manager.send_message(
-                        session_id,
-                        text,
-                        requested_skill_name=payload.get("requested_skill_name"),
-                    )
-                except KeyError:
+                if manager.get_session_status(session_id) is None:
                     _json_response(self, 404, {"error": f"Session '{session_id}' was not found."})
                     return
+                try:
+                    outbound = manager.send_and_wait(
+                        InboundMessage(
+                            content=text,
+                            source="gateway.http",
+                            channel="gateway",
+                            sender_id="gateway",
+                            chat_id=session_id,
+                            requested_skill_name=payload.get("requested_skill_name"),
+                            correlation_id=uuid4().hex,
+                            session_key_override=session_id,
+                        )
+                    )
                 except Exception as exc:
                     _json_response(self, 500, {"error": str(exc)})
                     return
+                response = {
+                    "session_id": outbound.session_id,
+                    "message": outbound.metadata.get("message")
+                    or {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": outbound.content}],
+                        "text": outbound.content,
+                    },
+                    "text": outbound.content,
+                    "status": manager.get_session_status(outbound.session_id),
+                }
+                if outbound.metadata.get("duration_seconds") is not None:
+                    response["duration_seconds"] = outbound.metadata["duration_seconds"]
                 _json_response(self, 200, response)
                 return
 
@@ -355,38 +403,29 @@ def build_gateway_handler(manager: GatewayRuntimeManager):
             text: str,
             requested_skill_name=None,
         ) -> None:
-            stream = manager.open_event_stream(session_id)
-            future = manager.submit_message(
-                session_id,
-                text,
-                requested_skill_name=requested_skill_name,
+            inbound = InboundMessage(
+                content=text,
                 source="gateway.sse",
+                channel="gateway",
+                sender_id="gateway",
+                chat_id=session_id,
+                requested_skill_name=requested_skill_name,
+                session_key_override=session_id,
             )
+            outbound_queue, unsubscribe = manager.open_response_stream(inbound)
             _sse_response_start(self)
-            terminal_seen = False
             try:
                 while True:
                     try:
-                        event = stream.events.get(timeout=0.1)
+                        outbound = outbound_queue.get(timeout=0.1)
                     except queue.Empty:
-                        if future.done():
-                            exc = future.exception()
-                            if exc is not None and not terminal_seen:
-                                _write_sse_event(
-                                    self,
-                                    {
-                                        "topic": "session.turn.failed",
-                                        "payload": {"error": str(exc)},
-                                    },
-                                )
-                            break
                         continue
+                    event = _outbound_to_event(outbound)
                     _write_sse_event(self, event)
-                    if event.get("topic") in TERMINAL_TOPICS and future.done():
-                        terminal_seen = True
+                    if event.get("topic") in TERMINAL_TOPICS:
                         break
             finally:
-                manager.close_event_stream(stream.stream_id)
+                unsubscribe()
 
         def _handle_websocket(self, session_id: str, *, once: bool) -> None:
             websocket_key = self.headers.get("Sec-WebSocket-Key")
@@ -443,37 +482,28 @@ def build_gateway_handler(manager: GatewayRuntimeManager):
                         return
                     continue
 
-                stream = manager.open_event_stream(session_id)
-                future = manager.submit_message(
-                    session_id,
-                    text,
-                    requested_skill_name=message.get("requested_skill_name"),
+                inbound = InboundMessage(
+                    content=text,
                     source="gateway.websocket",
+                    channel="gateway",
+                    sender_id="gateway",
+                    chat_id=session_id,
+                    requested_skill_name=message.get("requested_skill_name"),
+                    session_key_override=session_id,
                 )
-                terminal_seen = False
+                outbound_queue, unsubscribe = manager.open_response_stream(inbound)
                 try:
                     while True:
                         try:
-                            event = stream.events.get(timeout=0.1)
+                            outbound = outbound_queue.get(timeout=0.1)
                         except queue.Empty:
-                            if future.done():
-                                exc = future.exception()
-                                if exc is not None and not terminal_seen:
-                                    _send_websocket_json(
-                                        self,
-                                        {
-                                            "topic": "session.turn.failed",
-                                            "payload": {"error": str(exc)},
-                                        },
-                                    )
-                                break
                             continue
+                        event = _outbound_to_event(outbound)
                         _send_websocket_json(self, event)
-                        if event.get("topic") in TERMINAL_TOPICS and future.done():
-                            terminal_seen = True
+                        if event.get("topic") in TERMINAL_TOPICS:
                             break
                 finally:
-                    manager.close_event_stream(stream.stream_id)
+                    unsubscribe()
 
                 if once:
                     _send_websocket_frame(self, b"", opcode=0x8)
@@ -486,5 +516,5 @@ def build_gateway_handler(manager: GatewayRuntimeManager):
 
 
 class GatewayHTTPServer(ThreadingHTTPServer):
-    def __init__(self, server_address, manager: GatewayRuntimeManager) -> None:
+    def __init__(self, server_address, manager: ManagedRuntimeBoundary) -> None:
         super().__init__(server_address, build_gateway_handler(manager))

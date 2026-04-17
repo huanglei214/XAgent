@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
 import logging
 import queue
 import sys
@@ -15,6 +16,7 @@ from uuid import uuid4
 from xagent.agent.memory import create_runtime_memory
 from xagent.foundation.events import Event
 from xagent.foundation.messages import Message, message_text
+from xagent.foundation.runtime.paths import ensure_config_dir
 from xagent.scheduler.cron import JobScheduler, PersistentJobScheduler, ScheduledJobRecord
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,77 @@ class EventStreamHandle:
     stream_id: str
     session_id: str
     events: "queue.Queue[dict[str, Any]]"
+
+
+@dataclass
+class SessionKeyStore:
+    cwd: str
+
+    def __post_init__(self) -> None:
+        self._lock = threading.RLock()
+        self._path = ensure_config_dir(Path(self.cwd)) / "session-keys.json"
+        self._legacy_channel_path = ensure_config_dir(Path(self.cwd)) / "channel-sessions.json"
+
+    def resolve_session_id(
+        self,
+        session_key: str,
+        *,
+        session_exists: Callable[[str], Any],
+        create_session: Callable[[], str],
+    ) -> str:
+        with self._lock:
+            mapping = self._load()
+            session_id = mapping.get(session_key)
+            if session_id is None:
+                session_id = self._load_legacy_channel_mapping().get(session_key)
+
+        if session_id:
+            try:
+                if session_exists(session_id) is not None:
+                    return session_id
+            except Exception as exc:
+                logger.warning(
+                    "[RuntimeManager] session_exists failed for session_id=%s key=%s: %s; reusing cached id",
+                    session_id,
+                    session_key,
+                    exc,
+                )
+                return session_id
+
+        session_id = create_session()
+        with self._lock:
+            mapping = self._load()
+            existing_session_id = mapping.get(session_key)
+            if existing_session_id:
+                return existing_session_id
+            mapping[session_key] = session_id
+            self._save(mapping)
+        return session_id
+
+    def set_session_id(self, session_key: str, session_id: str) -> None:
+        with self._lock:
+            mapping = self._load()
+            mapping[session_key] = session_id
+            self._save(mapping)
+
+    def _load(self) -> dict[str, str]:
+        if not self._path.exists():
+            return {}
+        try:
+            return json.loads(self._path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+
+    def _load_legacy_channel_mapping(self) -> dict[str, str]:
+        if not self._legacy_channel_path.exists():
+            return {}
+        try:
+            return json.loads(self._legacy_channel_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+
+    def _save(self, mapping: dict[str, str]) -> None:
+        self._path.write_text(json.dumps(mapping, indent=2, sort_keys=True), encoding="utf-8")
 
 
 class SessionRuntimeManager:
@@ -38,6 +111,7 @@ class SessionRuntimeManager:
         self.cwd = str(Path(cwd).resolve())
         self.agent_factory = agent_factory
         self.runtime_factory = runtime_factory
+        self._session_keys = SessionKeyStore(self.cwd)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._ready = threading.Event()
@@ -47,8 +121,18 @@ class SessionRuntimeManager:
         self._streams: dict[str, dict[str, Any]] = {}
         self._persistent_scheduler: Optional[PersistentJobScheduler] = None
 
-    def create_session(self) -> str:
-        return self._call(self._create_session())
+    def create_session(self, *, session_key: Optional[str] = None) -> str:
+        session_id = self._call(self._create_session())
+        if session_key is not None:
+            self._session_keys.set_session_id(session_key, session_id)
+        return session_id
+
+    def resolve_session_id(self, session_key: str) -> str:
+        return self._session_keys.resolve_session_id(
+            session_key,
+            session_exists=self.get_session_status,
+            create_session=lambda: self.create_session(),
+        )
 
     def list_sessions(self) -> list[dict[str, Any]]:
         return self._call(self._list_sessions())
@@ -66,6 +150,7 @@ class SessionRuntimeManager:
         *,
         requested_skill_name: Optional[str] = None,
         source: str = "runtime.manager",
+        request_id: Optional[str] = None,
     ) -> dict[str, Any]:
         return self._call(
             self._send_message(
@@ -73,6 +158,7 @@ class SessionRuntimeManager:
                 text,
                 requested_skill_name=requested_skill_name,
                 source=source,
+                request_id=request_id,
             )
         )
 
@@ -216,6 +302,7 @@ class SessionRuntimeManager:
         *,
         requested_skill_name: Optional[str] = None,
         source: str = "runtime.manager",
+        request_id: Optional[str] = None,
     ):
         self._start_loop()
         return asyncio.run_coroutine_threadsafe(
@@ -224,6 +311,7 @@ class SessionRuntimeManager:
                 text,
                 requested_skill_name=requested_skill_name,
                 source=source,
+                request_id=request_id,
             ),
             self._loop,
         )
@@ -323,6 +411,7 @@ class SessionRuntimeManager:
     async def _create_session(self) -> str:
         runtime = self._new_runtime(session_id=None)
         self._runtimes[runtime.session_id] = runtime
+        self._session_keys.set_session_id(runtime.session_id, runtime.session_id)
         return runtime.session_id
 
     async def _list_sessions(self) -> list[dict[str, Any]]:
@@ -382,6 +471,7 @@ class SessionRuntimeManager:
         *,
         requested_skill_name: Optional[str] = None,
         source: str = "runtime.manager",
+        request_id: Optional[str] = None,
     ) -> dict[str, Any]:
         logger.info(
             "[RuntimeManager] _send_message start: session_id=%s source=%s text=%.100s",
@@ -396,6 +486,7 @@ class SessionRuntimeManager:
             text,
             source=source,
             requested_skill_name=requested_skill_name,
+            request_id=request_id,
         )
         await self._wait_for_runtime(runtime)
         logger.info("[RuntimeManager] _send_message done: session_id=%s", session_id)

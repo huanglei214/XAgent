@@ -4,9 +4,9 @@ from pathlib import Path
 
 import typer
 
-from xagent.cli.runtime import build_runtime_agent, build_session_runtime
+from xagent.cli.runtime import build_managed_runtime_boundary
 from xagent.cli.tui.render import print_error, print_info
-from xagent.gateway.http import GatewayHTTPServer, GatewayRuntimeManager
+from xagent.gateway.http import GatewayHTTPServer
 
 gateway_app = typer.Typer(help="Run the HTTP gateway.")
 
@@ -17,11 +17,7 @@ def serve_gateway(
     port: int = typer.Option(8000, help="TCP port to bind."),
 ) -> None:
     cwd = str(Path.cwd())
-    manager = GatewayRuntimeManager(
-        cwd=cwd,
-        agent_factory=lambda: build_runtime_agent(cwd, approval_prompt_fn=lambda _: "n"),
-        runtime_factory=build_session_runtime,
-    )
+    manager = build_managed_runtime_boundary(cwd, approval_prompt_fn=lambda _: "n")
     server = GatewayHTTPServer((host, port), manager)
     actual_host, actual_port = server.server_address[:2]
     print_info(f"Gateway listening on http://{actual_host}:{actual_port}")

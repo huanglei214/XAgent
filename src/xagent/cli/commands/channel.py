@@ -5,11 +5,9 @@ from pathlib import Path
 
 import typer
 
-from xagent.agent.runtime import SessionRuntimeManager
-from xagent.agent.runtime.channel_bridge import ChannelRuntimeBridge
 from xagent.channel.feishu import FeishuChannelAdapter, FeishuConfig
 from xagent.cli.config.loader import load_config
-from xagent.cli.runtime import build_runtime_agent, build_session_runtime
+from xagent.cli.runtime import build_managed_runtime_boundary
 from xagent.cli.tui.render import print_error, print_info
 
 channel_app = typer.Typer(help="Run XAgent channel ingress adapters.")
@@ -42,13 +40,8 @@ def serve_feishu_channel() -> None:
 
     _configure_logging(app_config.log_level)
 
-    manager = SessionRuntimeManager(
-        cwd=cwd,
-        agent_factory=lambda: build_runtime_agent(cwd, approval_prompt_fn=lambda _: "n"),
-        runtime_factory=build_session_runtime,
-    )
-    bridge = ChannelRuntimeBridge(cwd=cwd, manager=manager)
-    adapter = FeishuChannelAdapter(bridge=bridge, config=config)
+    boundary = build_managed_runtime_boundary(cwd, approval_prompt_fn=lambda _: "n")
+    adapter = FeishuChannelAdapter(boundary=boundary, config=config)
     print_info("Feishu channel listening via long connection")
     try:
         adapter.serve_forever()
@@ -60,4 +53,4 @@ def serve_feishu_channel() -> None:
         raise typer.Exit(code=1) from exc
     finally:
         adapter.close()
-        manager.close()
+        boundary.close()
