@@ -4,8 +4,9 @@ from pathlib import Path
 
 import typer
 
-from xagent.agent.runtime import InboundMessage, TurnResult
-from xagent.foundation.messages import Message, TextPart
+from xagent.agent.runtime import TurnResult
+from xagent.bus.messages import InboundMessage
+from xagent.bus.types import Message, TextPart
 from xagent.cli.tui.render import print_error
 from xagent.cli.runtime import (
     build_local_runtime_boundary,

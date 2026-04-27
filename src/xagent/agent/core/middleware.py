@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from xagent.foundation.messages import Message, ToolResultPart, ToolUsePart
-from xagent.foundation.models import ModelRequest
+from xagent.bus.types import Message, ToolResultPart, ToolUsePart
+from xagent.bus.types import ModelRequest
 
 
 class AgentMiddleware:

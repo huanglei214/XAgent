@@ -5,9 +5,9 @@ from typing import List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from xagent.agent.core.middleware import AgentMiddleware
-from xagent.foundation.messages import Message, TextPart
-from xagent.foundation.models import ModelRequest
-from xagent.foundation.tools import Tool, ToolContext, ToolResult
+from xagent.bus.types import Message, TextPart
+from xagent.bus.types import ModelRequest
+from xagent.agent.tools import Tool, ToolContext, ToolResult
 
 
 TODO_WRITE_TOOL_NAME = "todo_write"

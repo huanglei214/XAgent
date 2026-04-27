@@ -1,7 +1,7 @@
 import typer
 
-from xagent.cli.config.env import ensure_env_file
-from xagent.cli.config.loader import (
+from xagent.cli.config import ensure_env_file
+from xagent.cli.config import (
     add_model,
     config_exists,
     default_api_key_env,
@@ -11,8 +11,8 @@ from xagent.cli.config.loader import (
     save_config,
     set_default_model_name,
 )
-from xagent.cli.config.schema import ModelConfig, default_config
-from xagent.cli.config.template import ensure_config_example_file
+from xagent.cli.config import ModelConfig, default_config
+from xagent.cli.config import ensure_config_example_file
 from xagent.cli.tui.render import print_error, print_info
 
 config_app = typer.Typer(help="Manage XAgent configuration.")

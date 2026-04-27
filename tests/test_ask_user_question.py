@@ -1,11 +1,11 @@
 import unittest
 
-from xagent.agent.tools.workspace.ask_user_question import (
+from xagent.agent.tools.workspace.interaction import (
     AskUserQuestionInput,
     AskUserQuestionResultData,
     create_ask_user_question_tool,
 )
-from xagent.foundation.tools import ToolContext
+from xagent.agent.tools import ToolContext
 
 
 class AskUserQuestionToolTests(unittest.IsolatedAsyncioTestCase):

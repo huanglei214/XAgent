@@ -4,65 +4,15 @@ import asyncio
 import inspect
 import queue
 import threading
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Callable, Generic, Optional, TypeVar
+from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from xagent.agent.runtime.manager import SessionRuntimeManager
-from xagent.foundation.messages import Message, message_text
-
-MessageT = TypeVar("MessageT")
-MessageHandler = Callable[[MessageT], Any]
+from xagent.bus.messages import InboundMessage, OutboundMessage
+from xagent.bus.typed_bus import TypedMessageBus
+from xagent.bus.types import Message, message_text
 
 TERMINAL_OUTBOUND_KINDS = frozenset({"completed", "failed"})
-
-
-@dataclass
-class InboundMessage:
-    content: str
-    source: str
-    channel: str = "local"
-    sender_id: str = "local"
-    chat_id: str = "local"
-    requested_skill_name: Optional[str] = None
-    reply_to: Optional[str] = None
-    media: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.now)
-    correlation_id: str = field(default_factory=lambda: uuid4().hex)
-    session_key_override: Optional[str] = None
-
-    @property
-    def session_key(self) -> str:
-        if self.session_key_override:
-            return self.session_key_override
-        session_scope = self.metadata.get("session_scope")
-        session_value = self.metadata.get("session_value")
-        if session_scope and session_value:
-            return f"{self.channel}:{session_scope}:{session_value}"
-        chat_type = str(self.metadata.get("chat_type") or "").lower()
-        if chat_type:
-            if chat_type == "p2p":
-                return f"{self.channel}:user:{self.sender_id}"
-            return f"{self.channel}:chat:{self.chat_id}"
-        return f"{self.channel}:{self.chat_id or self.sender_id or self.source}"
-
-
-@dataclass
-class OutboundMessage:
-    kind: str
-    correlation_id: str
-    session_id: str
-    session_key: str
-    source: str
-    channel: str
-    chat_id: str
-    content: str = ""
-    reply_to: Optional[str] = None
-    error: Optional[str] = None
-    media: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def _message_text_from_payload(message: Any) -> str:
@@ -275,55 +225,6 @@ def _wait_for_terminal_outbound(
         return response_queue.get(timeout=timeout_seconds)
     finally:
         unsubscribe()
-
-
-class TypedMessageBus(Generic[MessageT]):
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._handlers: dict[int, tuple[MessageHandler[MessageT], Optional[Callable[[MessageT], bool]]]] = {}
-        self._next_handler_id = 0
-
-    def subscribe(
-        self,
-        handler: MessageHandler[MessageT],
-        *,
-        predicate: Optional[Callable[[MessageT], bool]] = None,
-    ) -> Callable[[], None]:
-        with self._lock:
-            handler_id = self._next_handler_id
-            self._next_handler_id += 1
-            self._handlers[handler_id] = (handler, predicate)
-
-        def _unsubscribe() -> None:
-            with self._lock:
-                self._handlers.pop(handler_id, None)
-
-        return _unsubscribe
-
-    async def publish(self, message: MessageT) -> None:
-        for handler, predicate in self._snapshot_handlers():
-            if predicate is not None and not predicate(message):
-                continue
-            result = handler(message)
-            if inspect.isawaitable(result):
-                await result
-
-    def publish_nowait(self, message: MessageT) -> None:
-        for handler, predicate in self._snapshot_handlers():
-            if predicate is not None and not predicate(message):
-                continue
-            result = handler(message)
-            if inspect.isawaitable(result):
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    asyncio.run(result)
-                else:
-                    loop.create_task(result)
-
-    def _snapshot_handlers(self) -> list[tuple[MessageHandler[MessageT], Optional[Callable[[MessageT], bool]]]]:
-        with self._lock:
-            return list(self._handlers.values())
 
 
 class LocalRuntimeBoundary:

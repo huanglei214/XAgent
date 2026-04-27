@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from xagent.foundation.tools import ToolResult
+from xagent.agent.tools import ToolResult
 
 
 def get_tool_result_policy(tool_name: str) -> dict[str, Any]:

@@ -4,9 +4,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from xagent.cli.config.schema import ModelConfig
-from xagent.foundation.messages import Message, TextPart, ToolResultPart, ToolUsePart
-from xagent.foundation.models import ModelRequest
+from xagent.cli.config import ModelConfig
+from xagent.bus.types import Message, TextPart, ToolResultPart, ToolUsePart
+from xagent.bus.types import ModelRequest
 from xagent.provider.openai import OpenAIChatProvider, _to_openai_messages
 
 
@@ -81,7 +81,7 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
-            with patch("xagent.provider.openai.provider.AsyncOpenAI", _FakeClient):
+            with patch("xagent.provider.openai.AsyncOpenAI", _FakeClient):
                 provider = OpenAIChatProvider(config)
                 parts = [part async for part in provider.stream_text(request)]
 
@@ -152,7 +152,7 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
-            with patch("xagent.provider.openai.provider.AsyncOpenAI", _FakeClientComplete):
+            with patch("xagent.provider.openai.AsyncOpenAI", _FakeClientComplete):
                 provider = OpenAIChatProvider(config)
                 message = await provider.complete(ModelRequest(model="ep-test", messages=[]))
 

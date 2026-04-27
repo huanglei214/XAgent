@@ -14,10 +14,20 @@ from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from xagent.agent.memory import create_runtime_memory
-from xagent.foundation.events import Event
-from xagent.foundation.messages import Message, message_text
+from xagent.agent.runtime.scheduler import JobScheduler, PersistentJobScheduler, ScheduledJobRecord
+from xagent.agent.runtime.serialization import (
+    build_status,
+    build_turn_response,
+    serialize_event,
+    serialize_job,
+    serialize_job_history,
+    serialize_message,
+    to_jsonable,
+)
+from xagent.bus.events import Event
+from xagent.bus.types import Message, message_text
 from xagent.foundation.runtime.paths import ensure_config_dir
-from xagent.scheduler.cron import JobScheduler, PersistentJobScheduler, ScheduledJobRecord
+from xagent.agent.runtime.scheduler import JobScheduler, PersistentJobScheduler, ScheduledJobRecord
 
 logger = logging.getLogger(__name__)
 
@@ -456,13 +466,13 @@ class SessionRuntimeManager:
         runtime = await self._ensure_runtime(session_id, restore=True)
         if runtime is None:
             return None
-        return self._build_status(runtime)
+        return build_status(runtime)
 
     async def _get_session_messages(self, session_id: str) -> Optional[list[dict[str, Any]]]:
         runtime = await self._ensure_runtime(session_id, restore=True)
         if runtime is None:
             return None
-        return [self._serialize_message(message) for message in runtime.messages]
+        return [serialize_message(message) for message in runtime.messages]
 
     async def _send_message(
         self,
@@ -490,7 +500,7 @@ class SessionRuntimeManager:
         )
         await self._wait_for_runtime(runtime)
         logger.info("[RuntimeManager] _send_message done: session_id=%s", session_id)
-        return self._build_turn_response(runtime, turn_result.message, turn_result.duration_seconds)
+        return build_turn_response(runtime, turn_result.message, turn_result.duration_seconds)
 
     async def _schedule_message(
         self,
@@ -553,7 +563,7 @@ class SessionRuntimeManager:
             max_retries=max_retries,
             source=source,
         )
-        return self._serialize_job(job)
+        return serialize_job(job)
 
     async def _add_cron_job(
         self,
@@ -583,11 +593,11 @@ class SessionRuntimeManager:
             max_retries=max_retries,
             source=source,
         )
-        return self._serialize_job(job)
+        return serialize_job(job)
 
     async def _list_jobs(self) -> list[dict[str, Any]]:
         scheduler = await self._ensure_persistent_scheduler()
-        return [self._serialize_job(job) for job in scheduler.list_jobs()]
+        return [serialize_job(job) for job in scheduler.list_jobs()]
 
     async def _remove_job(self, job_id: str) -> bool:
         scheduler = await self._ensure_persistent_scheduler()
@@ -598,14 +608,14 @@ class SessionRuntimeManager:
         job = scheduler.store.pause_job(job_id)
         if job is None:
             raise KeyError(job_id)
-        return self._serialize_job(job)
+        return serialize_job(job)
 
     async def _resume_job(self, job_id: str) -> dict[str, Any]:
         scheduler = await self._ensure_persistent_scheduler()
         job = scheduler.store.resume_job(job_id)
         if job is None:
             raise KeyError(job_id)
-        return self._serialize_job(job)
+        return serialize_job(job)
 
     async def _update_job(
         self,
@@ -642,11 +652,11 @@ class SessionRuntimeManager:
         )
         if job is None:
             raise KeyError(job_id)
-        return self._serialize_job(job)
+        return serialize_job(job)
 
     async def _list_job_history(self, *, job_id: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
         scheduler = await self._ensure_persistent_scheduler()
-        return [self._serialize_job_history(entry) for entry in scheduler.store.list_history(job_id=job_id, limit=limit)]
+        return [serialize_job_history(entry) for entry in scheduler.store.list_history(job_id=job_id, limit=limit)]
 
     async def _wait_for_job(self, job_id: str) -> dict[str, Any]:
         scheduler = self._persistent_scheduler
@@ -667,7 +677,7 @@ class SessionRuntimeManager:
         if not runtime.messages:
             raise RuntimeError(f"Scheduled job '{job_id}' completed without producing messages.")
         final_message = runtime.messages[-1]
-        return self._build_turn_response(runtime, final_message, None, job_id=job_id)
+        return build_turn_response(runtime, final_message, None, job_id=job_id)
 
     async def _start_persistent_scheduler(self, *, poll_interval_seconds: float = 1.0) -> None:
         scheduler = await self._ensure_persistent_scheduler(poll_interval_seconds=poll_interval_seconds)
@@ -693,7 +703,7 @@ class SessionRuntimeManager:
                 return
             if topic_filter and event.topic not in topic_filter:
                 return
-            event_queue.put_nowait(self._serialize_event(event))
+            event_queue.put_nowait(serialize_event(event))
 
         unsubscribe = runtime.bus.subscribe("*", _handler)
         self._streams[stream_id] = {
@@ -758,7 +768,7 @@ class SessionRuntimeManager:
             run_at=job.next_run_at,
         )
         await self._wait_for_runtime(runtime)
-        return self._build_turn_response(runtime, turn_result.message, turn_result.duration_seconds, job_id=job.job_id)
+        return build_turn_response(runtime, turn_result.message, turn_result.duration_seconds, job_id=job.job_id)
 
     async def _wait_for_runtime(self, runtime: Any, *, timeout: float = 5.0) -> None:
         wait_for_background_tasks = getattr(runtime, "wait_for_background_tasks", None)
@@ -838,106 +848,3 @@ class SessionRuntimeManager:
                 logger.warning("[RuntimeManager] cancelled pending task: session_id=%s task=%r", session_id, task)
             except Exception as exc:
                 logger.warning("[RuntimeManager] failed to cancel task: session_id=%s task=%r err=%s", session_id, task, exc)
-
-    def _build_turn_response(
-        self,
-        runtime: Any,
-        final_message: Message,
-        duration_seconds: Optional[float],
-        *,
-        job_id: Optional[str] = None,
-    ) -> dict[str, Any]:
-        payload = {
-            "session_id": runtime.session_id,
-            "message": self._serialize_message(final_message),
-            "text": message_text(final_message),
-            "status": self._build_status(runtime),
-        }
-        if duration_seconds is not None:
-            payload["duration_seconds"] = duration_seconds
-        if job_id is not None:
-            payload["job_id"] = job_id
-        return payload
-
-    def _build_status(self, runtime: Any) -> dict[str, Any]:
-        working_memory = getattr(runtime, "working_memory", None)
-        return {
-            "session_id": runtime.session_id,
-            "message_count": len(runtime.messages),
-            "active_tools": list(getattr(working_memory, "active_tools", [])) if working_memory is not None else [],
-            "requested_skill_name": getattr(working_memory, "requested_skill_name", None)
-            if working_memory is not None
-            else None,
-            "current_plan": getattr(working_memory, "current_plan", None) if working_memory is not None else None,
-            "scratchpad_keys": sorted(getattr(working_memory, "scratchpad", {}).keys())
-            if working_memory is not None
-            else [],
-        }
-
-    def _serialize_message(self, message: Message) -> dict[str, Any]:
-        payload = message.model_dump(mode="json")
-        payload["text"] = message_text(message)
-        return payload
-
-    def _serialize_job(self, job: ScheduledJobRecord) -> dict[str, Any]:
-        return {
-            "job_id": job.job_id,
-            "session_id": job.session_id,
-            "text": job.text,
-            "schedule_type": job.schedule_type,
-            "cron_expression": job.cron_expression,
-            "run_at": job.run_at,
-            "next_run_at": job.next_run_at,
-            "requested_skill_name": job.requested_skill_name,
-            "enabled": job.enabled,
-            "last_run_at": job.last_run_at,
-            "last_error": job.last_error,
-            "last_result_text": job.last_result_text,
-            "retry_enabled": job.retry_enabled,
-            "retry_delay_seconds": job.retry_delay_seconds,
-            "retry_backoff_multiplier": job.retry_backoff_multiplier,
-            "max_retries": job.max_retries,
-            "retry_count": job.retry_count,
-            "created_at": job.created_at,
-            "updated_at": job.updated_at,
-        }
-
-    def _serialize_job_history(self, entry) -> dict[str, Any]:
-        return {
-            "history_id": entry.history_id,
-            "job_id": entry.job_id,
-            "session_id": entry.session_id,
-            "status": entry.status,
-            "text": entry.text,
-            "source": entry.source,
-            "recorded_at": entry.recorded_at,
-            "result_text": entry.result_text,
-            "error_text": entry.error_text,
-            "attempt": entry.attempt,
-        }
-
-    def _serialize_event(self, event: Event) -> dict[str, Any]:
-        return {
-            "event_id": event.event_id,
-            "topic": event.topic,
-            "session_id": event.session_id,
-            "source": event.source,
-            "created_at": event.created_at,
-            "payload": self._to_jsonable(event.payload),
-        }
-
-    def _to_jsonable(self, value: Any) -> Any:
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            return value
-        if isinstance(value, list):
-            return [self._to_jsonable(item) for item in value]
-        if isinstance(value, tuple):
-            return [self._to_jsonable(item) for item in value]
-        if isinstance(value, dict):
-            return {str(key): self._to_jsonable(item) for key, item in value.items()}
-        if hasattr(value, "model_dump"):
-            try:
-                return self._to_jsonable(value.model_dump(mode="json"))
-            except TypeError:
-                return self._to_jsonable(value.model_dump())
-        return str(value)

@@ -4,8 +4,8 @@ from tempfile import TemporaryDirectory
 
 from xagent.agent.compaction import AutoCompactService
 from xagent.agent.memory import create_runtime_memory
-from xagent.foundation.events import Event, InMemoryMessageBus
-from xagent.foundation.messages import Message, TextPart, message_text
+from xagent.bus.events import Event, InMemoryMessageBus
+from xagent.bus.types import Message, TextPart, message_text
 
 
 class _MemoryAgent:

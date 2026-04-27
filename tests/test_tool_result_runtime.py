@@ -1,7 +1,7 @@
 import unittest
 
 from xagent.agent.tool_result_runtime import format_tool_result_for_message, summarize_tool_result_for_ui
-from xagent.foundation.tools import ToolResult
+from xagent.agent.tools import ToolResult
 
 
 class ToolResultRuntimeTests(unittest.TestCase):

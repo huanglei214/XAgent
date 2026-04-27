@@ -4,8 +4,8 @@ from pathlib import Path
 
 from xagent.agent.policies import ProjectRulesMiddleware, load_project_rules
 from xagent.agent.runtime import create_workspace_agent
-from xagent.foundation.messages import Message, TextPart
-from xagent.foundation.models import ModelRequest
+from xagent.bus.types import Message, TextPart
+from xagent.bus.types import ModelRequest
 
 
 class ProjectRulesTests(unittest.TestCase):

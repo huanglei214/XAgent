@@ -9,9 +9,9 @@ from typing import Awaitable, Callable, Optional
 from xagent.agent.core.middleware import AgentMiddleware
 from xagent.agent.core.runtime_events import emit_runtime_event
 from xagent.agent.tool_result_runtime import format_tool_result_for_message
-from xagent.foundation.messages import Message, TextPart, ToolResultPart, ToolUsePart, message_text
-from xagent.foundation.models import ModelRequest
-from xagent.foundation.tools import Tool, ToolContext, find_tool
+from xagent.bus.types import Message, TextPart, ToolResultPart, ToolUsePart, message_text
+from xagent.bus.types import ModelRequest
+from xagent.agent.tools import Tool, ToolContext, find_tool
 
 
 class AgentAborted(RuntimeError):

@@ -1,7 +1,7 @@
-from xagent.provider.anthropic.provider import AnthropicProvider
-from xagent.provider.ark.provider import ArkProvider
-from xagent.provider.openai.provider import OpenAIChatProvider
-from xagent.foundation.models import ModelConfig, ModelProvider
+from xagent.bus.types import ModelConfig, ModelProvider
+from xagent.provider.anthropic import AnthropicProvider
+from xagent.provider.ark import ArkProvider
+from xagent.provider.openai import OpenAIChatProvider
 
 
 def create_provider(config: ModelConfig) -> ModelProvider:

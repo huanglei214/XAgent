@@ -6,7 +6,8 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from xagent.agent.runtime import InboundMessage, ManagedRuntimeBoundary, OutboundMessage
+from xagent.agent.runtime import ManagedRuntimeBoundary
+from xagent.bus.messages import InboundMessage, OutboundMessage
 from xagent.channel.access import StaticChannelAccessPolicy
 from xagent.channel.feishu.client import FeishuApiClient, FeishuLongConnectionClient
 from xagent.channel.feishu.config import FeishuConfig

@@ -15,7 +15,7 @@ from xagent.agent.tools.workspace import (
     str_replace_tool,
     write_file_tool,
 )
-from xagent.foundation.tools import ToolContext
+from xagent.agent.tools import ToolContext
 
 
 class ToolTests(unittest.IsolatedAsyncioTestCase):

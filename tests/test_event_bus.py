@@ -1,6 +1,6 @@
 import unittest
 
-from xagent.foundation.events import Event, InMemoryMessageBus
+from xagent.bus.events import Event, InMemoryMessageBus
 
 
 class EventBusTests(unittest.IsolatedAsyncioTestCase):

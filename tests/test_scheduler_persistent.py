@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from xagent.scheduler.cron import CronExpression, PersistentJobScheduler, ScheduledJobStore
+from xagent.agent.runtime.scheduler import CronExpression, PersistentJobScheduler, ScheduledJobStore
 
 
 class CronExpressionTests(unittest.TestCase):

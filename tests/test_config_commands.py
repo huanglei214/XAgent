@@ -6,8 +6,8 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from xagent.cli.commands.config import config_app
-from xagent.cli.config.loader import add_model, default_api_key_env, default_base_url, remove_model, set_default_model_name
-from xagent.cli.config.schema import ModelConfig, default_config
+from xagent.cli.config import add_model, default_api_key_env, default_base_url, remove_model, set_default_model_name
+from xagent.cli.config import ModelConfig, default_config
 
 
 class ConfigCommandTests(unittest.TestCase):
@@ -35,8 +35,8 @@ class ConfigCommandTests(unittest.TestCase):
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch("xagent.foundation.runtime.paths.find_project_root", return_value=root):
-                from xagent.cli.config.loader import save_config
+            with patch("xagent.agent.paths.find_project_root", return_value=root):
+                from xagent.cli.config import save_config
 
                 save_config(default_config())
 

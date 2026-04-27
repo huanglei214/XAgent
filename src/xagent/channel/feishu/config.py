@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from xagent.channel.models import GroupIngressMode
-from xagent.cli.config.env import load_project_env
+from xagent.cli.config import load_project_env
 
 
 def _read_csv_env(name: str) -> tuple[str, ...]:

@@ -5,7 +5,7 @@ from xagent.agent import Agent, SkillsMiddleware, create_todo_system, discover_s
 from xagent.agent.core.middleware import AgentMiddleware
 from xagent.agent.policies import EditGuardrailsMiddleware, ProjectRulesMiddleware, load_project_rules
 from xagent.agent.tools.workspace import ALL_WORKSPACE_TOOLS, create_ask_user_question_tool
-from xagent.foundation.messages import Message, TextPart
+from xagent.bus.types import Message, TextPart
 
 
 def create_workspace_agent(

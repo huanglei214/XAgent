@@ -25,15 +25,15 @@ from prompt_toolkit.styles import Style
 
 from xagent.agent.policies import ApprovalMiddleware
 from xagent.agent.session import SessionSummary
-from xagent.agent.tools.workspace.ask_user_question import (
+from xagent.agent.tools.workspace.interaction import (
     AskUserQuestionAnswer,
     AskUserQuestionInput,
     AskUserQuestionResultData,
 )
 from xagent.agent.tool_result_runtime import summarize_tool_result_for_ui
 from xagent.agent.core import AgentAborted
-from xagent.agent.runtime import InboundMessage
-from xagent.cli.runtime.runtime import (
+from xagent.bus.messages import InboundMessage
+from xagent.cli.runtime import (
     build_local_runtime_boundary,
     build_runtime_agent,
     format_runtime_error,
@@ -41,7 +41,7 @@ from xagent.cli.runtime.runtime import (
     make_external_path_approval_handler,
 )
 from xagent.cli.tui.commands import BUILTIN_COMMANDS
-from xagent.foundation.messages import Message, ToolResultPart, ToolUsePart, message_text
+from xagent.bus.types import Message, ToolResultPart, ToolUsePart, message_text
 
 
 console = Console(highlight=False)

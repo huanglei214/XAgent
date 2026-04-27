@@ -10,8 +10,8 @@ from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
-from xagent.agent.runtime import InboundMessage
 from xagent.agent.runtime import ManagedRuntimeBoundary
+from xagent.bus.messages import InboundMessage
 
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 TERMINAL_TOPICS = {"session.turn.completed", "session.turn.failed"}

@@ -3,9 +3,9 @@ import unittest
 from pathlib import Path
 
 from xagent.agent.policies import EditGuardrailsMiddleware
-from xagent.agent.tools.workspace.read_file import read_file_tool
-from xagent.foundation.messages import ToolResultPart, ToolUsePart
-from xagent.foundation.tools import ToolContext
+from xagent.agent.tools.workspace.files import read_file_tool
+from xagent.bus.types import ToolResultPart, ToolUsePart
+from xagent.agent.tools import ToolContext
 
 
 class GuardrailTests(unittest.IsolatedAsyncioTestCase):

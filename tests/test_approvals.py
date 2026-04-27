@@ -7,8 +7,8 @@ from pydantic import BaseModel
 
 from xagent.agent.core import Agent
 from xagent.agent.policies import ApprovalMiddleware, ApprovalStore, requires_approval
-from xagent.foundation.messages import Message, ToolUsePart
-from xagent.foundation.tools import Tool, ToolContext, ToolResult
+from xagent.bus.types import Message, ToolUsePart
+from xagent.agent.tools import Tool, ToolContext, ToolResult
 
 
 class _FakeProvider:

@@ -6,7 +6,7 @@ from pathlib import Path
 import typer
 
 from xagent.channel.feishu import FeishuChannelAdapter, FeishuConfig
-from xagent.cli.config.loader import load_config
+from xagent.cli.config import load_config
 from xagent.cli.runtime import build_managed_runtime_boundary
 from xagent.cli.tui.render import print_error, print_info
 

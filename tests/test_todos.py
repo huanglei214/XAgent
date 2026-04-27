@@ -1,9 +1,9 @@
 import unittest
 
 from xagent.agent.todos import TODO_WRITE_TOOL_NAME, TodoMiddleware, TodoStore, create_todo_system
-from xagent.foundation.messages import Message, TextPart, ToolUsePart
-from xagent.foundation.models import ModelRequest
-from xagent.foundation.tools import ToolContext
+from xagent.bus.types import Message, TextPart, ToolUsePart
+from xagent.bus.types import ModelRequest
+from xagent.agent.tools import ToolContext
 
 
 class TodoTests(unittest.IsolatedAsyncioTestCase):

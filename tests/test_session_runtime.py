@@ -5,8 +5,8 @@ from tempfile import TemporaryDirectory
 from xagent.agent.memory import create_runtime_memory
 from xagent.agent.runtime import SessionRuntime
 from xagent.agent.session import SessionStore
-from xagent.foundation.events import Event, InMemoryMessageBus
-from xagent.foundation.messages import Message, TextPart, ToolResultPart, ToolUsePart, message_text
+from xagent.bus.events import Event, InMemoryMessageBus
+from xagent.bus.types import Message, TextPart, ToolResultPart, ToolUsePart, message_text
 
 
 class _RuntimeAgent:

@@ -9,7 +9,7 @@ import typer
 
 from xagent.cli.runtime import build_managed_runtime_boundary, render_final_message
 from xagent.cli.tui.render import print_error, print_info
-from xagent.foundation.messages import Message
+from xagent.bus.types import Message
 
 schedule_app = typer.Typer(help="Run scheduled jobs.")
 
