@@ -41,7 +41,7 @@ from xagent.cli.runtime import (
     make_external_path_approval_handler,
 )
 from xagent.cli.tui.commands import BUILTIN_COMMANDS
-from xagent.bus.types import Message, ToolResultPart, ToolUsePart, message_text
+from xagent.provider.types import Message, ToolResultPart, ToolUsePart, message_text
 
 
 console = Console(highlight=False)

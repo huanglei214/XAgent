@@ -9,7 +9,7 @@ from time import time
 from typing import List, Optional, Tuple, Union
 from uuid import uuid4
 
-from xagent.bus.types import Message, TextPart, ToolResultPart, ToolUsePart, message_text
+from xagent.provider.types import Message, TextPart, ToolResultPart, ToolUsePart, message_text
 from xagent.agent.paths import ensure_config_dir, get_session_file, get_sessions_dir
 
 CHECKPOINT_HEADER = "[session-checkpoint"

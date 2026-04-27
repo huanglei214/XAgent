@@ -6,7 +6,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from xagent.bus.types import ModelConfig
+from xagent.provider.types import ModelConfig
 from xagent.agent.paths import (
     ensure_config_dir,
     get_config_example_file,

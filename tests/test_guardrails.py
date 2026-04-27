@@ -4,7 +4,7 @@ from pathlib import Path
 
 from xagent.agent.policies import EditGuardrailsMiddleware
 from xagent.agent.tools.workspace.files import read_file_tool
-from xagent.bus.types import ToolResultPart, ToolUsePart
+from xagent.provider.types import ToolResultPart, ToolUsePart
 from xagent.agent.tools import ToolContext
 
 

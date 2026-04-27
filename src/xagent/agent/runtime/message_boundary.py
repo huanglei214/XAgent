@@ -10,7 +10,7 @@ from uuid import uuid4
 from xagent.agent.runtime.manager import SessionRuntimeManager
 from xagent.bus.messages import InboundMessage, OutboundMessage
 from xagent.bus.typed_bus import TypedMessageBus
-from xagent.bus.types import Message, message_text
+from xagent.provider.types import Message, message_text
 
 TERMINAL_OUTBOUND_KINDS = frozenset({"completed", "failed"})
 

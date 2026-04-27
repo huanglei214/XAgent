@@ -4,8 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from xagent.cli.config import ModelConfig
-from xagent.bus.types import Message, TextPart, ToolResultPart, ToolUsePart
-from xagent.bus.types import ModelRequest
+from xagent.provider.types import Message, TextPart, ToolResultPart, ToolUsePart
+from xagent.provider.types import ModelRequest
 from xagent.provider.openai import OpenAIChatProvider, _to_openai_messages
 
 

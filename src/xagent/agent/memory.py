@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from xagent.agent.paths import get_semantic_memory_file
 from xagent.agent.session import SessionLoadMetadata, SessionStore, SessionSummary
-from xagent.bus.types import Message
+from xagent.provider.types import Message
 
 
 class WorkingMemory:

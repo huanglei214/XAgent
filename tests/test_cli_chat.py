@@ -24,7 +24,7 @@ from xagent.cli.tui.tui import (
 )
 from xagent.agent.session import SessionSummary
 from xagent.agent.tools.workspace.interaction import AskUserQuestionInput
-from xagent.bus.types import Message, TextPart, ToolResultPart, ToolUsePart
+from xagent.provider.types import Message, TextPart, ToolResultPart, ToolUsePart
 
 
 class _FakeAgent:

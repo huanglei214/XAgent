@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from xagent.bus.events import Event
-from xagent.bus.types import Message, message_text
+from xagent.provider.types import Message, message_text
 from xagent.agent.runtime.scheduler import ScheduledJobRecord, ScheduledJobHistoryEntry
 
 

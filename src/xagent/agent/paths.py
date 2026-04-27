@@ -4,7 +4,7 @@ import inspect
 from pathlib import Path
 from typing import Optional
 
-from xagent.bus.errors import WorkspaceEscapeError
+from xagent.agent.errors import WorkspaceEscapeError
 
 
 def find_project_root(start: Optional[Path] = None) -> Path:

@@ -1,3 +1,4 @@
+from xagent.agent.runtime.channel_manager import ChannelManager
 from xagent.agent.runtime.manager import SessionRuntimeManager
 from xagent.agent.runtime.message_boundary import LocalRuntimeBoundary, ManagedRuntimeBoundary
 from xagent.agent.runtime.scheduler import (
@@ -12,6 +13,7 @@ from xagent.agent.runtime.session_runtime import SessionRestoreResult, SessionRu
 from xagent.agent.runtime.workspace_agent import create_workspace_agent
 
 __all__ = [
+    "ChannelManager",
     "CronExpression",
     "JobScheduler",
     "LocalRuntimeBoundary",

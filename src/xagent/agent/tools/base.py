@@ -5,7 +5,7 @@ from typing import Any, Awaitable, Callable, Optional, Type
 
 from pydantic import BaseModel, Field
 
-from xagent.bus.errors import WorkspaceEscapeError
+from xagent.agent.errors import WorkspaceEscapeError
 
 
 class ToolContext(BaseModel):

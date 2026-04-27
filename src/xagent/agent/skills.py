@@ -9,7 +9,7 @@ from typing import Iterable, List, Optional
 
 from xagent.agent.core.middleware import AgentMiddleware
 from xagent.agent.core.runtime_events import emit_runtime_event
-from xagent.bus.types import ModelRequest, TextPart
+from xagent.provider.types import ModelRequest, TextPart
 
 
 @dataclass

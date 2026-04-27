@@ -14,7 +14,7 @@ from xagent.agent.paths import (
     get_trace_index_file,
     get_traces_dir,
 )
-from xagent.bus.types import message_text
+from xagent.provider.types import message_text
 
 
 def classify_task_kind(prompt: str) -> str:

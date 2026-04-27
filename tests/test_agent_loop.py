@@ -5,7 +5,7 @@ import unittest
 from pydantic import BaseModel
 
 from xagent.agent.core import Agent, AgentAborted, AgentMiddleware
-from xagent.bus.types import Message, TextPart, ToolUsePart, message_text
+from xagent.provider.types import Message, TextPart, ToolUsePart, message_text
 from xagent.agent.tools import Tool, ToolContext, ToolResult
 
 

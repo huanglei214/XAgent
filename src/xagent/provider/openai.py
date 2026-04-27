@@ -3,7 +3,7 @@ from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
-from xagent.bus.types import Message, ModelConfig, ModelRequest, TextPart, ToolUsePart
+from xagent.provider.types import Message, ModelConfig, ModelRequest, TextPart, ToolUsePart
 
 
 class OpenAIChatProvider:

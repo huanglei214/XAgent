@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Optional
 
 from anthropic import AsyncAnthropic
 
-from xagent.bus.types import Message, ModelConfig, ModelRequest, TextPart, ToolUsePart, message_text
+from xagent.provider.types import Message, ModelConfig, ModelRequest, TextPart, ToolUsePart, message_text
 
 
 class AnthropicProvider:

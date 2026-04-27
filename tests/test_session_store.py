@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from xagent.agent.session import SessionStore
-from xagent.bus.types import Message, TextPart
+from xagent.provider.types import Message, TextPart
 
 
 class SessionStoreTests(unittest.TestCase):

@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 from xagent.agent.memory import create_runtime_memory
 from xagent.agent.runtime import SessionRuntime
 from xagent.bus.events import InMemoryMessageBus
-from xagent.bus.types import Message, TextPart
+from xagent.provider.types import Message, TextPart
 
 
 class _ManagerAgent:

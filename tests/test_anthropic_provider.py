@@ -8,7 +8,7 @@ from xagent.provider.anthropic import (
     _from_anthropic_message,
     _to_anthropic_request_kwargs,
 )
-from xagent.bus.types import Message, ModelRequest, TextPart, ToolResultPart, ToolUsePart
+from xagent.provider.types import Message, ModelRequest, TextPart, ToolResultPart, ToolUsePart
 
 
 class _FakeStream:

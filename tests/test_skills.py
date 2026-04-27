@@ -3,8 +3,8 @@ import unittest
 from pathlib import Path
 
 from xagent.agent.skills import SkillsMiddleware, discover_skills
-from xagent.bus.types import Message, TextPart
-from xagent.bus.types import ModelRequest
+from xagent.provider.types import Message, TextPart
+from xagent.provider.types import ModelRequest
 
 
 class SkillsTests(unittest.IsolatedAsyncioTestCase):

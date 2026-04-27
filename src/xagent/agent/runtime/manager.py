@@ -26,7 +26,7 @@ from xagent.agent.runtime.serialization import (
     to_jsonable,
 )
 from xagent.bus.events import Event
-from xagent.bus.types import Message, message_text
+from xagent.provider.types import Message, message_text
 
 logger = logging.getLogger(__name__)
 

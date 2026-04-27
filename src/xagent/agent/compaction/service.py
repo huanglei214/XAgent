@@ -6,7 +6,7 @@ from typing import Callable, Optional
 
 from xagent.agent.memory import EpisodicMemory, WorkingMemory
 from xagent.bus.events import Event, InMemoryMessageBus
-from xagent.bus.types import Message, message_text
+from xagent.provider.types import Message, message_text
 
 
 @dataclass

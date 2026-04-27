@@ -5,8 +5,8 @@ from typing import List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from xagent.agent.core.middleware import AgentMiddleware
-from xagent.bus.types import Message, TextPart
-from xagent.bus.types import ModelRequest
+from xagent.provider.types import Message, TextPart
+from xagent.provider.types import ModelRequest
 from xagent.agent.tools import Tool, ToolContext, ToolResult
 
 

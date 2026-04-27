@@ -1,4 +1,4 @@
-from xagent.bus.types import ModelConfig, ModelProvider
+from xagent.provider.types import ModelConfig, ModelProvider
 from xagent.provider.anthropic import AnthropicProvider
 from xagent.provider.ark import ArkProvider
 from xagent.provider.openai import OpenAIChatProvider

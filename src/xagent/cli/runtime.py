@@ -20,7 +20,7 @@ from xagent.agent.runtime import (
 )
 from xagent.cli.tui.render import print_error, print_info, print_panel, print_tool_use
 from xagent.cli.config import load_config, resolve_default_model
-from xagent.bus.types import ToolUsePart, message_text
+from xagent.provider.types import ToolUsePart, message_text
 from xagent.provider import create_provider
 from xagent.agent.core.loop import AgentAborted
 from xagent.agent.traces import TraceMiddleware

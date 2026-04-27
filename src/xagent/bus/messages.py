@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import uuid4
 
 
@@ -55,3 +55,132 @@ class OutboundMessage:
     error: Optional[str] = None
     media: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# 阶段 3 新增：OutboundMessage.metadata 的约定键 + 辅助构造函数。
+#
+# 设计理念（openspec 0001-simplify-bus）：
+# 运行时事件（turn/tool/thinking）和最终回复都走同一条 outbound 队列，
+# 通过 metadata 的约定键来区分语义，便于 ChannelManager 统一分发。
+# ---------------------------------------------------------------------------
+
+
+# OutboundMessage.metadata._event 的允许取值。
+EventKind = Literal[
+    "turn_start",
+    "turn_end",
+    "tool_use",
+    "tool_result",
+    "thinking_delta",
+    "text_delta",
+    "scheduler_fired",
+    "compact_started",
+    "compact_finished",
+]
+
+
+# metadata 的约定键说明（仅作为文档；实际存储为普通 dict[str, Any]）：
+#   _progress:   bool  — 是否为中间进度消息（默认 False 表示最终回复）
+#   _tool_hint:  bool  — 是否为工具相关提示（需配合 _progress=True）
+#   _event:      str   — 事件子类型，取值见 EventKind
+#   _stream:     bool  — 是否为流式增量 chunk（消费者应累积而非替换）
+#   _terminal:   bool  — 是否为本 correlation_id 的最终消息
+#   _source:     str   — 消息来源标签（例如 "scheduler"、"heartbeat"）
+META_PROGRESS = "_progress"
+META_TOOL_HINT = "_tool_hint"
+META_EVENT = "_event"
+META_STREAM = "_stream"
+META_TERMINAL = "_terminal"
+META_SOURCE = "_source"
+
+
+def make_progress(
+    *,
+    correlation_id: str,
+    session_id: str,
+    session_key: str,
+    channel: str,
+    chat_id: str,
+    source: str,
+    event: EventKind,
+    content: str = "",
+    kind: str = "event",
+    tool_hint: bool = False,
+    stream: bool = False,
+    extra_metadata: Optional[dict[str, Any]] = None,
+) -> OutboundMessage:
+    """构造一条中间进度 ``OutboundMessage``。
+
+    会自动置 ``metadata._progress=True``、``metadata._event=<event>``，
+    适用于 turn/tool/thinking 等"运行时事件"的发布。
+    """
+
+    metadata: dict[str, Any] = {
+        META_PROGRESS: True,
+        META_EVENT: event,
+    }
+    if tool_hint:
+        metadata[META_TOOL_HINT] = True
+    if stream:
+        metadata[META_STREAM] = True
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    return OutboundMessage(
+        kind=kind,
+        correlation_id=correlation_id,
+        session_id=session_id,
+        session_key=session_key,
+        source=source,
+        channel=channel,
+        chat_id=chat_id,
+        content=content,
+        metadata=metadata,
+    )
+
+
+def make_terminal(
+    *,
+    correlation_id: str,
+    session_id: str,
+    session_key: str,
+    channel: str,
+    chat_id: str,
+    source: str,
+    content: str,
+    kind: str = "completed",
+    reply_to: Optional[str] = None,
+    error: Optional[str] = None,
+    extra_metadata: Optional[dict[str, Any]] = None,
+) -> OutboundMessage:
+    """构造本 ``correlation_id`` 的最终 ``OutboundMessage``。
+
+    会自动置 ``metadata._terminal=True``，ChannelManager 据此判定响应流结束。
+    """
+
+    metadata: dict[str, Any] = {META_TERMINAL: True}
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    return OutboundMessage(
+        kind=kind,
+        correlation_id=correlation_id,
+        session_id=session_id,
+        session_key=session_key,
+        source=source,
+        channel=channel,
+        chat_id=chat_id,
+        content=content,
+        reply_to=reply_to,
+        error=error,
+        metadata=metadata,
+    )
+
+
+def is_progress(msg: OutboundMessage) -> bool:
+    """判断一条 outbound 是否为中间进度消息。"""
+    return bool(msg.metadata.get(META_PROGRESS))
+
+
+def is_terminal(msg: OutboundMessage) -> bool:
+    """判断一条 outbound 是否为本 correlation_id 的最终消息。"""
+    return bool(msg.metadata.get(META_TERMINAL))

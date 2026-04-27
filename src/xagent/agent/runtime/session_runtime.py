@@ -8,7 +8,7 @@ from xagent.agent.compaction import AutoCompactService
 from xagent.agent.memory import RuntimeMemory, create_runtime_memory
 from xagent.agent.session import SessionLoadMetadata, SessionStore, SessionSummary
 from xagent.bus.events import Event, InMemoryMessageBus
-from xagent.bus.types import Message, ToolResultPart, ToolUsePart, message_text
+from xagent.provider.types import Message, ToolResultPart, ToolUsePart, message_text
 
 
 @dataclass
