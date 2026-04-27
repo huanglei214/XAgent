@@ -48,9 +48,13 @@ XAgent is a Python workspace-aware assistant runtime and CLI.
 
    仓库根目录还会生成一个 `config.example.yaml`，方便查看推荐结构或重新拷贝模板。
 
-7. 在项目本地 `.env` 文件中添加您的 OpenAI（或其他 LLM 提供商）API 密钥：
-   ```env
-   OPENAI_API_KEY=your-api-key-here
+7. 在项目本地 `.xagent/config.yaml` 文件中添加您的 OpenAI（或其他 LLM 提供商）API 密钥：
+   ```yaml
+   models:
+     - name: "gpt-4o-mini"
+       provider: "openai"
+       base_url: "https://api.openai.com/v1"
+       api_key: "your-api-key-here"
    ```
 
 8. 运行简单任务测试配置是否正确：
@@ -142,7 +146,7 @@ im:message:send_as_bot
   - 接收发给机器人的私聊消息
 - `im:message.group_at_msg:readonly`
   - 接收群聊中 @ 机器人的消息
-  - 这和当前默认 `FEISHU_GROUP_MODE=mention_only` 对应
+  - 这和当前默认 `feishu.group_mode=mention_only` 对应
 - `im:message:send_as_bot`
   - 以机器人身份发送文本消息
 
@@ -162,7 +166,7 @@ im:message.group_msg:readonly
 - 给应用安装到你的测试租户
 - 在事件订阅里启用长连接模式
 - 如果要在群里使用，确认机器人被允许加入目标群
-- 如果只想让 bot 在群里响应被 @ 的消息，保留 `FEISHU_GROUP_MODE=mention_only`
+- 如果只想让 bot 在群里响应被 @ 的消息，保留 `feishu.group_mode=mention_only`
 
 **和当前实现的映射关系**
 
@@ -179,57 +183,58 @@ im:message.group_msg:readonly
 
 如果你在控制台里一时找不到完全同名的中文权限，优先按上面的 scope 字符串去搜；这版代码并没有依赖联系人、日历、云文档、卡片流式更新之类的额外权限。
 
-### 2. 准备项目本地 `.env`
+### 2. 准备项目本地 `.xagent/config.yaml`
 
-当前 Feishu channel 读取的是项目根目录 `.env`。
+当前 Feishu channel 读取的是项目本地 `.xagent/config.yaml` 的 `feishu` 配置块。
 
 最小示例：
 
-```env
-FEISHU_APP_ID=cli_xxxxxxxxxxxxx
-FEISHU_APP_SECRET=xxxxxxxxxxxxxxxx
+```yaml
+feishu:
+  app_id: "cli_xxxxxxxxxxxxx"
+  app_secret: "xxxxxxxxxxxxxxxx"
 
-# 可选：如果你接的是 Lark 国际版，可改成 https://open.larksuite.com
-FEISHU_API_BASE_URL=https://open.feishu.cn
+  # 可选：如果你接的是 Lark 国际版，可改成 https://open.larksuite.com
+  api_base_url: "https://open.feishu.cn"
 
-# 可选：群聊 mention 过滤时，用来识别“是否 @ 了 bot”
-FEISHU_BOT_OPEN_ID=ou_xxxxxxxxxxxxx
+  # 可选：群聊 mention 过滤时，用来识别“是否 @ 了 bot”
+  bot_open_id: "ou_xxxxxxxxxxxxx"
 
-# mention_only | all_text
-FEISHU_GROUP_MODE=mention_only
+  # mention_only | all_text
+  group_mode: "mention_only"
 
-# 访问控制
-FEISHU_ALLOW_ALL=false
-FEISHU_ALLOWED_USER_IDS=ou_xxx1,ou_xxx2
-FEISHU_ALLOWED_CHAT_IDS=oc_xxx1,oc_xxx2
+  # 访问控制
+  allow_all: false
+  allowed_user_ids: ["ou_xxx1", "ou_xxx2"]
+  allowed_chat_ids: ["oc_xxx1", "oc_xxx2"]
 
-# 可选：默认会自动退避重连
-FEISHU_RECONNECT_INITIAL_SECONDS=1.0
-FEISHU_RECONNECT_CAP_SECONDS=30.0
+  # 可选：默认会自动退避重连
+  reconnect_initial_seconds: 1.0
+  reconnect_cap_seconds: 30.0
 
-# 可选：增量输出节流
-FEISHU_PARTIAL_EMIT_CHARS=32
+  # 可选：增量输出节流
+  partial_emit_chars: 32
 
-# 可选：拒绝访问时给用户返回的提示
-FEISHU_DENY_MESSAGE=Access denied.
+  # 可选：拒绝访问时给用户返回的提示
+  deny_message: "Access denied."
 ```
 
 各字段含义：
 
-- `FEISHU_APP_ID` / `FEISHU_APP_SECRET`：开放平台应用凭据
-- `FEISHU_API_BASE_URL`：开放平台域名，飞书默认 `https://open.feishu.cn`
-- `FEISHU_BOT_OPEN_ID`：群聊 `mention_only` 模式下，用来判断是否真的 @ 了当前 bot
-- `FEISHU_GROUP_MODE`：群聊消息接收策略
+- `feishu.app_id` / `feishu.app_secret`：开放平台应用凭据
+- `feishu.api_base_url`：开放平台域名，飞书默认 `https://open.feishu.cn`
+- `feishu.bot_open_id`：群聊 `mention_only` 模式下，用来判断是否真的 @ 了当前 bot
+- `feishu.group_mode`：群聊消息接收策略
   - `mention_only`：只有 @ bot 的群消息才进入 XAgent
   - `all_text`：群里的普通文本消息也会进入 XAgent
-- `FEISHU_ALLOW_ALL`：是否关闭访问控制，允许所有用户/群
-- `FEISHU_ALLOWED_USER_IDS` / `FEISHU_ALLOWED_CHAT_IDS`：白名单
+- `feishu.allow_all`：是否关闭访问控制，允许所有用户/群
+- `feishu.allowed_user_ids` / `feishu.allowed_chat_ids`：白名单
 
 当前实现已经改成更接近官方/常见 agent 的接法：
 
 - 长连接接收侧使用飞书官方 Python SDK `lark-oapi`
-- SDK 会用 `FEISHU_APP_ID/FEISHU_APP_SECRET` 自动生成长连接地址并维护连接
-- 用户不再需要手填 `FEISHU_WS_URL`
+- SDK 会用 `feishu.app_id` / `feishu.app_secret` 自动生成长连接地址并维护连接
+- 用户不再需要手填长连接 URL
 - 发送消息这侧也改成通过官方 SDK client 调用消息发送接口
 
 ### 3. 启动方式
@@ -244,8 +249,8 @@ uv run xagent channel feishu serve
 
 如果启动时：
 
-- `FEISHU_APP_ID` 缺失
-- `FEISHU_APP_SECRET` 缺失
+- `feishu.app_id` 缺失
+- `feishu.app_secret` 缺失
 - 初始鉴权或初始连接失败
 
 当前实现会直接失败退出，而不是静默降级。
@@ -257,8 +262,8 @@ uv run xagent channel feishu serve
 1. 私聊给 bot 发文本，XAgent 能收到并回复
 2. 群聊里 `@bot` 发文本，`mention_only` 模式能收到并回复
 3. 群聊里不 `@bot` 发文本，`mention_only` 模式不会误触发
-4. 把 `FEISHU_GROUP_MODE=all_text` 后，群普通文本也会进入
-5. 不在白名单里的用户或群，会收到 `FEISHU_DENY_MESSAGE`
+4. 把 `feishu.group_mode` 设为 `all_text` 后，群普通文本也会进入
+5. 不在白名单里的用户或群，会收到 `feishu.deny_message`
 6. 启动时配错 `APP_ID/APP_SECRET`，进程会 fail fast
 7. 长连接断开后，会按退避策略自动重连
 
@@ -271,7 +276,7 @@ uv run xagent channel feishu serve
 - 当前需要你提供的是稳定凭据和策略配置，而不是长连接 URL
 
 也就是说，这版已经不再要求你自己维护底层 WebSocket 握手地址。  
-如果你所在的飞书应用环境还有额外的租户、权限、事件订阅或国际版域名差异，优先通过开放平台应用配置和 `FEISHU_API_BASE_URL` 来解决。
+如果你所在的飞书应用环境还有额外的租户、权限、事件订阅或国际版域名差异，优先通过开放平台应用配置和 `feishu.api_base_url` 来解决。
 
 ### 6. 相关代码入口
 

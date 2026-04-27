@@ -7,10 +7,10 @@ import queue
 import struct
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime
+from typing import Any, Callable, Protocol
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
-from xagent.agent.runtime import ManagedRuntimeBoundary
 from xagent.bus.messages import InboundMessage
 
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -23,6 +23,44 @@ OUTBOUND_TOPIC_MAP = {
     "tool_finished": "tool.finished",
     "compaction_completed": "memory.compaction.completed",
 }
+
+
+class GatewayRuntimeBoundary(Protocol):
+    def list_sessions(self) -> list[dict[str, Any]]:
+        ...
+
+    def list_jobs(self) -> list[dict[str, Any]]:
+        ...
+
+    def list_job_history(self, *, job_id=None, limit: int = 100) -> list[dict[str, Any]]:
+        ...
+
+    def get_session_status(self, session_id: str):
+        ...
+
+    def get_session_messages(self, session_id: str):
+        ...
+
+    def create_session(self, *, session_key=None) -> str:
+        ...
+
+    def add_cron_job(self, session_id: str, text: str, **kwargs):
+        ...
+
+    def add_once_job(self, session_id: str, text: str, **kwargs):
+        ...
+
+    def update_job(self, job_id: str, **kwargs):
+        ...
+
+    def remove_job(self, job_id: str) -> bool:
+        ...
+
+    def send_and_wait(self, inbound: InboundMessage):
+        ...
+
+    def open_response_stream(self, inbound: InboundMessage) -> tuple["queue.Queue[Any]", Callable[[], None]]:
+        ...
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload) -> None:
@@ -130,7 +168,7 @@ def _outbound_to_event(message) -> dict:
     }
 
 
-def build_gateway_handler(manager: ManagedRuntimeBoundary):
+def build_gateway_handler(manager: GatewayRuntimeBoundary):
     class GatewayHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -516,5 +554,5 @@ def build_gateway_handler(manager: ManagedRuntimeBoundary):
 
 
 class GatewayHTTPServer(ThreadingHTTPServer):
-    def __init__(self, server_address, manager: ManagedRuntimeBoundary) -> None:
+    def __init__(self, server_address, manager: GatewayRuntimeBoundary) -> None:
         super().__init__(server_address, build_gateway_handler(manager))

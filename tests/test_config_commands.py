@@ -6,7 +6,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from xagent.cli.commands.config import config_app
-from xagent.cli.config import add_model, default_api_key_env, default_base_url, remove_model, set_default_model_name
+from xagent.cli.config import add_model, default_base_url, remove_model, set_default_model_name
 from xagent.cli.config import ModelConfig, default_config
 
 
@@ -19,7 +19,7 @@ class ConfigCommandTests(unittest.TestCase):
                 name="gpt-4.1",
                 provider="openai",
                 base_url=default_base_url("openai"),
-                api_key_env=default_api_key_env("openai"),
+                api_key="test-key",
             ),
             make_default=True,
         )
@@ -48,6 +48,8 @@ class ConfigCommandTests(unittest.TestCase):
                         "gpt-4.1",
                         "--provider",
                         "openai",
+                        "--api-key",
+                        "test-key",
                         "--default",
                     ],
                 )
@@ -56,6 +58,7 @@ class ConfigCommandTests(unittest.TestCase):
                 result = runner.invoke(config_app, ["model", "list"])
                 self.assertEqual(result.exit_code, 0)
                 self.assertIn("gpt-4.1", result.output)
+                self.assertIn("api_key=set", result.output)
 
                 result = runner.invoke(config_app, ["model", "remove", "gpt-4.1"])
                 self.assertEqual(result.exit_code, 0)

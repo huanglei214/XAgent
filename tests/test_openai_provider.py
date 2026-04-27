@@ -1,4 +1,3 @@
-import os
 from json import dumps
 import unittest
 from types import SimpleNamespace
@@ -73,17 +72,16 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
             name="ep-test",
             provider="ark",
             base_url="https://ark.cn-beijing.volces.com/api/v3",
-            api_key_env="ARK_API_KEY",
+            api_key="test-key",
         )
         request = ModelRequest(
             model=config.name,
             messages=[Message(role="user", content=[TextPart(text="hello")])],
         )
 
-        with patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
-            with patch("xagent.provider.openai.AsyncOpenAI", _FakeClient):
-                provider = OpenAIChatProvider(config)
-                parts = [part async for part in provider.stream_text(request)]
+        with patch("xagent.provider.openai.AsyncOpenAI", _FakeClient):
+            provider = OpenAIChatProvider(config)
+            parts = [part async for part in provider.stream_text(request)]
 
         self.assertEqual(parts, ["Hello", " world"])
         self.assertEqual(provider.provider_name, "ark")
@@ -93,11 +91,10 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
             name="ep-test",
             provider="ark",
             base_url="https://ark.cn-beijing.volces.com/api/v3",
-            api_key_env="ARK_API_KEY",
+            api_key="",
         )
-        with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaises(ValueError):
-                OpenAIChatProvider(config)
+        with self.assertRaises(ValueError):
+            OpenAIChatProvider(config)
 
     def test_openai_message_conversion(self) -> None:
         request = ModelRequest(
@@ -148,13 +145,12 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
             name="ep-test",
             provider="ark",
             base_url="https://ark.cn-beijing.volces.com/api/v3",
-            api_key_env="ARK_API_KEY",
+            api_key="test-key",
         )
 
-        with patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
-            with patch("xagent.provider.openai.AsyncOpenAI", _FakeClientComplete):
-                provider = OpenAIChatProvider(config)
-                message = await provider.complete(ModelRequest(model="ep-test", messages=[]))
+        with patch("xagent.provider.openai.AsyncOpenAI", _FakeClientComplete):
+            provider = OpenAIChatProvider(config)
+            message = await provider.complete(ModelRequest(model="ep-test", messages=[]))
 
         self.assertEqual(message.role, "assistant")
         self.assertEqual(message.content[0].text, "Final answer")

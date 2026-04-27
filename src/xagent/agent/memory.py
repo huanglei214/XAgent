@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from xagent.agent.paths import get_semantic_memory_file
 from xagent.agent.session import SessionLoadMetadata, SessionStore, SessionSummary
 from xagent.bus.types import Message
-from xagent.foundation.runtime.paths import get_semantic_memory_file
 
 
 class WorkingMemory:

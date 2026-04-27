@@ -14,6 +14,7 @@ from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from xagent.agent.memory import create_runtime_memory
+from xagent.agent.paths import ensure_config_dir
 from xagent.agent.runtime.scheduler import JobScheduler, PersistentJobScheduler, ScheduledJobRecord
 from xagent.agent.runtime.serialization import (
     build_status,
@@ -26,8 +27,6 @@ from xagent.agent.runtime.serialization import (
 )
 from xagent.bus.events import Event
 from xagent.bus.types import Message, message_text
-from xagent.foundation.runtime.paths import ensure_config_dir
-from xagent.agent.runtime.scheduler import JobScheduler, PersistentJobScheduler, ScheduledJobRecord
 
 logger = logging.getLogger(__name__)
 

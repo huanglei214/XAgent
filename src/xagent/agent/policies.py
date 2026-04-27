@@ -12,9 +12,8 @@ import typer
 
 from xagent.agent.core.middleware import AgentMiddleware
 from xagent.agent.core.runtime_events import emit_runtime_event
+from xagent.agent.paths import ensure_config_dir, find_project_root, get_approvals_file, resolve_workspace_path
 from xagent.bus.types import ToolResultPart, ToolUsePart
-from xagent.foundation.runtime.paths import ensure_config_dir, find_project_root, get_approvals_file
-from xagent.foundation.runtime.workspace_paths import resolve_workspace_path
 
 
 MUTATING_TOOLS = {"write_file", "apply_patch", "bash", "mkdir", "move_path", "str_replace"}

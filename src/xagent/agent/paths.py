@@ -24,10 +24,6 @@ def get_config_file(start: Optional[Path] = None) -> Path:
     return get_config_dir(start) / "config.yaml"
 
 
-def get_env_file(start: Optional[Path] = None) -> Path:
-    return find_project_root(start) / ".env"
-
-
 def get_config_example_file(start: Optional[Path] = None) -> Path:
     return find_project_root(start) / "config.example.yaml"
 

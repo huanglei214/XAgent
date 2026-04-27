@@ -1,21 +1,35 @@
 from __future__ import annotations
 
-import os
+import ast
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
 from xagent.bus.types import ModelConfig
-from xagent.foundation.runtime.paths import (
+from xagent.agent.paths import (
     ensure_config_dir,
     get_config_example_file,
     get_config_file,
-    get_env_file,
 )
 
 
 # ── schema ──────────────────────────────────────────────────────────────────
+
+
+class FeishuAppConfig(BaseModel):
+    app_id: str = ""
+    app_secret: str = ""
+    api_base_url: str = "https://open.feishu.cn"
+    bot_open_id: Optional[str] = None
+    group_mode: Literal["mention_only", "all_text"] = "mention_only"
+    allow_all: bool = False
+    allowed_user_ids: list[str] = Field(default_factory=list)
+    allowed_chat_ids: list[str] = Field(default_factory=list)
+    reconnect_initial_seconds: float = 1.0
+    reconnect_cap_seconds: float = 30.0
+    partial_emit_chars: int = 32
+    deny_message: str = "Access denied."
 
 
 class AppConfig(BaseModel):
@@ -23,6 +37,7 @@ class AppConfig(BaseModel):
     max_model_calls: int = Field(default=100, ge=1, le=1000)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "WARNING"
     models: list[ModelConfig]
+    feishu: FeishuAppConfig = Field(default_factory=FeishuAppConfig)
 
     @model_validator(mode="after")
     def validate_default_model(self) -> AppConfig:
@@ -42,74 +57,9 @@ def default_config() -> AppConfig:
         name="ep-your-ark-endpoint-id",
         provider="ark",
         base_url="https://ark.cn-beijing.volces.com/api/v3",
-        api_key_env="ARK_API_KEY",
+        api_key="",
     )
     return AppConfig(default_model=model.name, max_model_calls=100, log_level="WARNING", models=[model])
-
-
-# ── env ─────────────────────────────────────────────────────────────────────
-
-
-def ensure_env_file(start: Path | None = None, force: bool = False) -> Path:
-    """确保 .env 文件存在，不存在则创建。"""
-    env_path = get_env_file(start)
-    if env_path.exists() and not force:
-        return env_path
-
-    env_path.write_text(_default_env_contents(), encoding="utf-8")
-    return env_path
-
-
-def load_project_env(start: Path | None = None, override: bool = False) -> dict[str, str]:
-    """加载项目 .env 文件到环境变量。"""
-    env_path = get_env_file(start)
-    if not env_path.exists():
-        return {}
-
-    values = _parse_env(env_path.read_text(encoding="utf-8"))
-    for key, value in values.items():
-        if override or key not in os.environ:
-            os.environ[key] = value
-    return values
-
-
-def _default_env_contents() -> str:
-    """返回默认 .env 文件内容。"""
-    return (
-        "# Project-local environment variables for XAgent\n"
-        "ARK_API_KEY=\n"
-        "OPENAI_API_KEY=\n"
-        "ANTHROPIC_API_KEY=\n"
-        "FEISHU_APP_ID=\n"
-        "FEISHU_APP_SECRET=\n"
-        "FEISHU_API_BASE_URL=https://open.feishu.cn\n"
-        "FEISHU_BOT_OPEN_ID=\n"
-        "FEISHU_GROUP_MODE=mention_only\n"
-        "FEISHU_ALLOW_ALL=false\n"
-        "FEISHU_ALLOWED_USER_IDS=\n"
-        "FEISHU_ALLOWED_CHAT_IDS=\n"
-    )
-
-
-def _parse_env(raw: str) -> dict[str, str]:
-    """解析 .env 文件内容为键值对。"""
-    values: dict[str, str] = {}
-    for original_line in raw.splitlines():
-        line = original_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[7:].strip()
-        if "=" not in line:
-            continue
-
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-            value = value[1:-1]
-        values[key] = value
-    return values
 
 
 # ── loader ──────────────────────────────────────────────────────────────────
@@ -203,15 +153,6 @@ def default_base_url(provider: str) -> str:
     return "https://api.openai.com/v1"
 
 
-def default_api_key_env(provider: str) -> str:
-    """根据 provider 返回默认 api_key_env。"""
-    if provider == "ark":
-        return "ARK_API_KEY"
-    if provider == "anthropic":
-        return "ANTHROPIC_API_KEY"
-    return "OPENAI_API_KEY"
-
-
 def _dump_config(config: AppConfig) -> str:
     """将 AppConfig 序列化为 YAML 字符串（内部委托）。"""
     return dump_config_yaml(config)
@@ -231,8 +172,35 @@ def dump_config_yaml(config: AppConfig) -> str:
         lines.append(f'    provider: "{_quote_yaml(model.provider)}"')
         if model.base_url:
             lines.append(f'    base_url: "{_quote_yaml(model.base_url)}"')
-        lines.append(f'    api_key_env: "{_quote_yaml(model.api_key_env)}"')
+        lines.append(f'    api_key: "{_quote_yaml(model.api_key)}"')
+    lines.extend(
+        [
+            "feishu:",
+            f'  app_id: "{_quote_yaml(config.feishu.app_id)}"',
+            f'  app_secret: "{_quote_yaml(config.feishu.app_secret)}"',
+            f'  api_base_url: "{_quote_yaml(config.feishu.api_base_url)}"',
+            f'  bot_open_id: "{_quote_yaml(config.feishu.bot_open_id or "")}"',
+            f'  group_mode: "{_quote_yaml(config.feishu.group_mode)}"',
+            f"  allow_all: {_dump_yaml_bool(config.feishu.allow_all)}",
+            f"  allowed_user_ids: {_dump_yaml_list(config.feishu.allowed_user_ids)}",
+            f"  allowed_chat_ids: {_dump_yaml_list(config.feishu.allowed_chat_ids)}",
+            f"  reconnect_initial_seconds: {config.feishu.reconnect_initial_seconds}",
+            f"  reconnect_cap_seconds: {config.feishu.reconnect_cap_seconds}",
+            f"  partial_emit_chars: {config.feishu.partial_emit_chars}",
+            f'  deny_message: "{_quote_yaml(config.feishu.deny_message)}"',
+        ]
+    )
     return "\n".join(lines) + "\n"
+
+
+def _dump_yaml_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _dump_yaml_list(values: list[str]) -> str:
+    if not values:
+        return "[]"
+    return "[" + ", ".join(f'"{_quote_yaml(value)}"' for value in values) + "]"
 
 
 def _quote_yaml(value: str) -> str:
@@ -242,9 +210,10 @@ def _quote_yaml(value: str) -> str:
 
 def _parse_config_yaml(raw: str) -> dict[str, Any]:
     """解析配置 YAML 文本为字典。"""
-    data: dict[str, Any] = {"models": []}
-    current_model: dict[str, str] | None = None
+    data: dict[str, Any] = {"models": [], "feishu": {}}
+    current_model: dict[str, Any] | None = None
     in_models = False
+    in_feishu = False
 
     for original_line in raw.splitlines():
         stripped = original_line.strip()
@@ -253,12 +222,21 @@ def _parse_config_yaml(raw: str) -> dict[str, Any]:
 
         if stripped == "models:":
             in_models = True
+            in_feishu = False
+            current_model = None
+            continue
+        if stripped == "feishu:":
+            in_models = False
+            in_feishu = True
             current_model = None
             continue
 
         if stripped.startswith("default_model:"):
             _, value = stripped.split(":", 1)
             data["default_model"] = _parse_yaml_scalar(value.strip())
+            in_models = False
+            in_feishu = False
+            current_model = None
             continue
 
         if stripped.startswith("max_model_calls:"):
@@ -268,11 +246,17 @@ def _parse_config_yaml(raw: str) -> dict[str, Any]:
                 data["max_model_calls"] = int(raw_value)
             except ValueError as exc:
                 raise ValueError(f"Invalid max_model_calls value: {raw_value}") from exc
+            in_models = False
+            in_feishu = False
+            current_model = None
             continue
 
         if stripped.startswith("log_level:"):
             _, value = stripped.split(":", 1)
             data["log_level"] = _parse_yaml_scalar(value.strip()).upper()
+            in_models = False
+            in_feishu = False
+            current_model = None
             continue
 
         if stripped.startswith("- "):
@@ -284,6 +268,11 @@ def _parse_config_yaml(raw: str) -> dict[str, Any]:
             if rest:
                 key, value = _split_yaml_key_value(rest)
                 current_model[key] = _parse_yaml_scalar(value)
+            continue
+
+        if in_feishu:
+            key, value = _split_yaml_key_value(stripped)
+            data["feishu"][key] = _parse_yaml_scalar(value)
             continue
 
         if current_model is None:
@@ -305,13 +294,26 @@ def _split_yaml_key_value(line: str) -> tuple[str, str]:
     return key.strip(), value.strip()
 
 
-def _parse_yaml_scalar(value: str) -> str:
+def _parse_yaml_scalar(value: str):
     """解析 YAML 标量值，去除引号并处理转义。"""
     if not value:
         return ""
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
         inner = value[1:-1]
         return inner.replace('\\"', '"').replace("\\\\", "\\")
+    lowered = value.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
+    if lowered in {"null", "none", "~"}:
+        return None
+    if value.startswith("[") and value.endswith("]"):
+        try:
+            parsed = ast.literal_eval(value)
+        except (SyntaxError, ValueError) as exc:
+            raise ValueError(f"Invalid inline list value: {value}") from exc
+        if not isinstance(parsed, list):
+            raise ValueError(f"Expected inline list value, got: {value}")
+        return [str(item) for item in parsed]
     return value
 
 

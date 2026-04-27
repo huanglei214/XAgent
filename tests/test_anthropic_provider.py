@@ -1,4 +1,3 @@
-import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,8 +8,7 @@ from xagent.provider.anthropic import (
     _from_anthropic_message,
     _to_anthropic_request_kwargs,
 )
-from xagent.foundation.messages import Message, TextPart, ToolResultPart, ToolUsePart
-from xagent.foundation.models import ModelRequest
+from xagent.bus.types import Message, ModelRequest, TextPart, ToolResultPart, ToolUsePart
 
 
 class _FakeStream:
@@ -154,7 +152,7 @@ class AnthropicProviderTests(unittest.IsolatedAsyncioTestCase):
             name="claude-3-7-sonnet-latest",
             provider="anthropic",
             base_url="https://api.anthropic.com",
-            api_key_env="ANTHROPIC_API_KEY",
+            api_key="test-key",
         )
         request = ModelRequest(
             model=config.name,
@@ -171,10 +169,9 @@ class AnthropicProviderTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):
-            with patch("xagent.provider.anthropic.AsyncAnthropic", lambda **_: fake_client):
-                provider = AnthropicProvider(config)
-                message = await provider.complete(request)
+        with patch("xagent.provider.anthropic.AsyncAnthropic", lambda **_: fake_client):
+            provider = AnthropicProvider(config)
+            message = await provider.complete(request)
 
         self.assertEqual(message.content[0].text, "I will inspect it.")
         self.assertEqual(message.content[1].name, "read_file")
@@ -210,16 +207,15 @@ class AnthropicProviderTests(unittest.IsolatedAsyncioTestCase):
             name="claude-3-7-sonnet-latest",
             provider="anthropic",
             base_url="https://api.anthropic.com",
-            api_key_env="ANTHROPIC_API_KEY",
+            api_key="test-key",
         )
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):
-            with patch("xagent.provider.anthropic.AsyncAnthropic", lambda **_: fake_client):
-                provider = AnthropicProvider(config)
-                snapshots = [
-                    snapshot
-                    async for snapshot in provider.stream_complete(ModelRequest(model=config.name, messages=[]))
-                ]
+        with patch("xagent.provider.anthropic.AsyncAnthropic", lambda **_: fake_client):
+            provider = AnthropicProvider(config)
+            snapshots = [
+                snapshot
+                async for snapshot in provider.stream_complete(ModelRequest(model=config.name, messages=[]))
+            ]
 
         self.assertEqual([snapshot.content[0].text for snapshot in snapshots[:2]], ["Hel", "Hello"])
         self.assertEqual(snapshots[-1].content[0].text, "Hello")

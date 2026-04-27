@@ -8,13 +8,13 @@ from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from xagent.agent.core.middleware import AgentMiddleware
-from xagent.bus.types import message_text
-from xagent.foundation.runtime.paths import (
+from xagent.agent.paths import (
     ensure_config_dir,
     get_trace_artifacts_dir,
     get_trace_index_file,
     get_traces_dir,
 )
+from xagent.bus.types import message_text
 
 
 def classify_task_kind(prompt: str) -> str:

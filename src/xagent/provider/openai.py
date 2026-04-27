@@ -1,4 +1,3 @@
-import os
 import json
 from typing import Any, AsyncIterator
 
@@ -12,11 +11,11 @@ class OpenAIChatProvider:
 
     def __init__(self, config: ModelConfig) -> None:
         self.provider_name = config.provider
-        api_key = os.getenv(config.api_key_env)
+        api_key = config.api_key.strip()
         if not api_key:
             raise ValueError(
-                f"Environment variable {config.api_key_env} is not set. "
-                "Set it before running XAgent."
+                f"API key for model '{config.name}' is not configured. "
+                "Set models[].api_key in .xagent/config.yaml before running XAgent."
             )
 
         client_kwargs: dict[str, Any] = {"api_key": api_key}

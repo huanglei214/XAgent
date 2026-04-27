@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, AsyncIterator, Optional
 
 from anthropic import AsyncAnthropic
@@ -13,11 +12,11 @@ class AnthropicProvider:
     """Anthropic Claude chat completion provider."""
 
     def __init__(self, config: ModelConfig) -> None:
-        api_key = os.getenv(config.api_key_env)
+        api_key = config.api_key.strip()
         if not api_key:
             raise ValueError(
-                f"Environment variable {config.api_key_env} is not set. "
-                "Set it before running XAgent."
+                f"API key for model '{config.name}' is not configured. "
+                "Set models[].api_key in .xagent/config.yaml before running XAgent."
             )
 
         client_kwargs = {"api_key": api_key}

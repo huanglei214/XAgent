@@ -1,10 +1,8 @@
 import typer
 
-from xagent.cli.config import ensure_env_file
 from xagent.cli.config import (
     add_model,
     config_exists,
-    default_api_key_env,
     default_base_url,
     load_config,
     remove_model,
@@ -23,7 +21,6 @@ config_app.add_typer(model_app, name="model")
 @config_app.command("init")
 def init_config(force: bool = typer.Option(False, help="Overwrite an existing config file.")) -> None:
     config_path = None
-    env_path = ensure_env_file(force=force)
     example_path = ensure_config_example_file(force=force)
 
     if config_exists() and not force:
@@ -32,9 +29,8 @@ def init_config(force: bool = typer.Option(False, help="Overwrite an existing co
         config_path = save_config(default_config())
         print_info(f"Wrote XAgent config to {config_path}")
 
-    print_info(f"Ensured project env file at {env_path}")
     print_info(f"Ensured config example file at {example_path}")
-    print_info("Set ARK_API_KEY in .env and update the endpoint id in the config before running `xagent`.")
+    print_info("Set models[].api_key and update the endpoint id in .xagent/config.yaml before running `xagent`.")
 
 
 @config_app.command("show")
@@ -71,8 +67,9 @@ def list_models() -> None:
 
     for model in config.models:
         marker = "*" if model.name == config.default_model else " "
+        key_status = "set" if model.api_key else "missing"
         print_info(
-            f"{marker} {model.name} | provider={model.provider} | base_url={model.base_url or '-'} | env={model.api_key_env}"
+            f"{marker} {model.name} | provider={model.provider} | base_url={model.base_url or '-'} | api_key={key_status}"
         )
 
 
@@ -81,7 +78,7 @@ def add_model_command(
     name: str = typer.Argument(..., help="Model name or endpoint id."),
     provider: str = typer.Option(..., "--provider", help="Provider type: openai, anthropic, or ark."),
     base_url: str = typer.Option("", "--base-url", help="Provider base URL. Uses provider default when omitted."),
-    api_key_env: str = typer.Option("", "--api-key-env", help="API key environment variable name."),
+    api_key: str = typer.Option("", "--api-key", help="API key stored in .xagent/config.yaml."),
     make_default: bool = typer.Option(False, "--default", help="Set the new model as default."),
 ) -> None:
     try:
@@ -99,7 +96,7 @@ def add_model_command(
         name=name,
         provider=provider,
         base_url=base_url or default_base_url(provider),
-        api_key_env=api_key_env or default_api_key_env(provider),
+        api_key=api_key,
     )
     updated = add_model(config, model, make_default=make_default)
     save_config(updated)

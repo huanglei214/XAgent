@@ -32,8 +32,8 @@ def _configure_logging(log_level: str) -> None:
 def serve_feishu_channel() -> None:
     cwd = str(Path.cwd())
     try:
-        config = FeishuConfig.from_env(cwd)
         app_config = load_config()
+        config = FeishuConfig.from_app_config(app_config)
     except Exception as exc:
         print_error(str(exc))
         raise typer.Exit(code=1) from exc

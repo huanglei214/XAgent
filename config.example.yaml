@@ -8,4 +8,17 @@ models:
   - name: "ep-your-ark-endpoint-id"
     provider: "ark"
     base_url: "https://ark.cn-beijing.volces.com/api/v3"
-    api_key_env: "ARK_API_KEY"
+    api_key: ""
+feishu:
+  app_id: ""
+  app_secret: ""
+  api_base_url: "https://open.feishu.cn"
+  bot_open_id: ""
+  group_mode: "mention_only"
+  allow_all: false
+  allowed_user_ids: []
+  allowed_chat_ids: []
+  reconnect_initial_seconds: 1.0
+  reconnect_cap_seconds: 30.0
+  partial_emit_chars: 32
+  deny_message: "Access denied."

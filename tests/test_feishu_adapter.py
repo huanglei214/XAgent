@@ -5,6 +5,7 @@ import time
 import unittest
 from types import SimpleNamespace
 
+from xagent.cli.config import FeishuAppConfig
 from xagent.channel.feishu.adapter import FeishuChannelAdapter
 from xagent.channel.feishu.config import FeishuConfig
 from xagent.channel.models import GroupIngressMode
@@ -82,6 +83,30 @@ class FeishuAdapterTests(unittest.TestCase):
         }
         values.update(overrides)
         return FeishuConfig(**values)
+
+    def test_feishu_config_loads_from_app_config(self) -> None:
+        app_config = SimpleNamespace(
+            feishu=FeishuAppConfig(
+                app_id="app-id",
+                app_secret="app-secret",
+                bot_open_id="bot-open-id",
+                group_mode="all_text",
+                allow_all=True,
+                allowed_user_ids=["ou_1"],
+                allowed_chat_ids=["oc_1"],
+                partial_emit_chars=64,
+            )
+        )
+
+        config = FeishuConfig.from_app_config(app_config)
+
+        self.assertEqual(config.app_id, "app-id")
+        self.assertEqual(config.app_secret, "app-secret")
+        self.assertEqual(config.group_mode, GroupIngressMode.ALL_TEXT)
+        self.assertTrue(config.allow_all)
+        self.assertEqual(config.allowed_user_ids, ("ou_1",))
+        self.assertEqual(config.allowed_chat_ids, ("oc_1",))
+        self.assertEqual(config.partial_emit_chars, 64)
 
     def _event(self, *, text: str, chat_type: str, mentions=None, user_id="user-1", chat_id="chat-1"):
         return SimpleNamespace(

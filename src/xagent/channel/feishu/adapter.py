@@ -4,9 +4,8 @@ import logging
 import queue
 import threading
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
-from xagent.agent.runtime import ManagedRuntimeBoundary
 from xagent.bus.messages import InboundMessage, OutboundMessage
 from xagent.channel.access import StaticChannelAccessPolicy
 from xagent.channel.feishu.client import FeishuApiClient, FeishuLongConnectionClient
@@ -15,6 +14,14 @@ from xagent.channel.models import ChannelEnvelope, ChannelIdentity
 from xagent.channel.session_routing import is_group_message_allowed
 
 logger = logging.getLogger(__name__)
+
+
+class ResponseStreamBoundary(Protocol):
+    def open_response_stream(
+        self,
+        inbound: InboundMessage,
+    ) -> tuple["queue.Queue[OutboundMessage]", Callable[[], None]]:
+        ...
 
 
 class FeishuTextStreamSink:
@@ -80,7 +87,7 @@ class FeishuChannelAdapter:
     def __init__(
         self,
         *,
-        boundary: ManagedRuntimeBoundary,
+        boundary: ResponseStreamBoundary,
         config: FeishuConfig,
         api_client: FeishuApiClient | None = None,
         long_connection_factory: Callable[
