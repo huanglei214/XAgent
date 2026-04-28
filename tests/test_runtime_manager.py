@@ -1,9 +1,11 @@
 import unittest
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from xagent.agent.memory import create_runtime_memory
+from xagent.agent.runtime.manager import SessionKeyStore
 from xagent.agent.runtime import SessionRuntime
-from xagent.bus.events import InMemoryMessageBus
+from xagent.bus.queue import MessageBus
 from xagent.provider.types import Message, TextPart
 
 
@@ -29,9 +31,9 @@ class _ManagerAgent:
         self.abort_calls += 1
 
 
-def _build_test_runtime(agent, *, session_id=None, cwd=None, bus=None):
+def _build_test_runtime(agent, *, session_id=None, cwd=None, message_bus=None):
     memory = create_runtime_memory(cwd or ".", agent=agent)
-    message_bus = bus or InMemoryMessageBus()
+    message_bus = message_bus or MessageBus()
 
     async def _turn_runner(prompt, *, on_assistant_delta, on_tool_use, on_tool_result):
         reply_text = f"managed:{prompt}"
@@ -45,15 +47,34 @@ def _build_test_runtime(agent, *, session_id=None, cwd=None, bus=None):
 
     runtime = SessionRuntime(
         session_id=session_id or memory.episodic.new_session_id(),
-        bus=message_bus,
         turn_runner=_turn_runner,
         agent=agent,
         memory=memory,
+        message_bus=message_bus,
     )
     return message_bus, runtime
 
 
 class SessionRuntimeManagerTests(unittest.TestCase):
+    def test_session_key_store_reuses_legacy_channel_mapping(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy_path = root / ".xagent" / "channel-sessions.json"
+            legacy_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_path.write_text(
+                '{"feishu:user:user-1": "session-legacy"}',
+                encoding="utf-8",
+            )
+
+            store = SessionKeyStore(tmp)
+            resolved = store.resolve_session_id(
+                "feishu:user:user-1",
+                session_exists=lambda session_id: {"session_id": session_id},
+                create_session=lambda: "new-session",
+            )
+
+        self.assertEqual(resolved, "session-legacy")
+
     def test_manager_resolves_and_reuses_session_key_routes(self) -> None:
         from xagent.agent.runtime.manager import SessionRuntimeManager
 

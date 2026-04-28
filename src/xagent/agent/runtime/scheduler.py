@@ -10,12 +10,13 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Union
 from uuid import uuid4
 
-from xagent.bus.events import Event, InMemoryMessageBus
 from xagent.agent.paths import (
     ensure_config_dir,
     get_scheduler_history_file,
     get_scheduler_jobs_file,
 )
+from xagent.bus.messages import InboundMessage
+from xagent.bus.queue import MessageBus
 
 
 @dataclass(frozen=True)
@@ -113,9 +114,9 @@ class ScheduledJob:
 
 
 class JobScheduler:
-    """Fire-and-forget scheduler that publishes events via InMemoryMessageBus."""
+    """Fire-and-forget scheduler that publishes inbound messages via MessageBus."""
 
-    def __init__(self, *, bus: InMemoryMessageBus) -> None:
+    def __init__(self, *, bus: MessageBus) -> None:
         self.bus = bus
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -156,17 +157,20 @@ class JobScheduler:
         delay = max(0.0, job.run_at - time.time())
         if delay > 0:
             await asyncio.sleep(delay)
-        await self.bus.publish(
-            Event(
-                topic="job.scheduled.triggered",
-                session_id=job.session_id,
-                payload={
+        await self.bus.publish_inbound(
+            InboundMessage(
+                content=job.text,
+                source=job.source,
+                channel="scheduler",
+                sender_id="scheduler",
+                chat_id=job.session_id,
+                requested_skill_name=job.requested_skill_name,
+                correlation_id=job.job_id,
+                session_key_override=job.session_id,
+                metadata={
                     "job_id": job.job_id,
-                    "text": job.text,
-                    "requested_skill_name": job.requested_skill_name,
                     "run_at": job.run_at,
                 },
-                source=job.source,
             )
         )
 
@@ -530,7 +534,7 @@ class ScheduledJobStore:
         self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-DispatchCallback = Callable[[ScheduledJobRecord], Union[Awaitable[dict[str, Any]], dict[str, Any]]]
+DispatchInboundCallback = Callable[[InboundMessage], Union[Awaitable[dict[str, Any]], dict[str, Any]]]
 
 
 class PersistentJobScheduler:
@@ -540,12 +544,12 @@ class PersistentJobScheduler:
         self,
         *,
         cwd: str | Path,
-        dispatch: DispatchCallback,
+        dispatch_inbound: DispatchInboundCallback,
         poll_interval_seconds: float = 1.0,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.store = ScheduledJobStore(cwd)
-        self.dispatch = dispatch
+        self.dispatch_inbound = dispatch_inbound
         self.poll_interval_seconds = max(0.1, poll_interval_seconds)
         self.clock = clock
         self._runner_task: Optional[asyncio.Task[None]] = None
@@ -667,7 +671,21 @@ class PersistentJobScheduler:
 
     async def _dispatch_job(self, job: ScheduledJobRecord) -> dict[str, Any]:
         try:
-            result = self.dispatch(job)
+            inbound = InboundMessage(
+                content=job.text,
+                source=job.source,
+                channel="scheduler",
+                sender_id="scheduler",
+                chat_id=job.session_id,
+                requested_skill_name=job.requested_skill_name,
+                correlation_id=job.job_id,
+                session_key_override=job.session_id,
+                metadata={
+                    "job_id": job.job_id,
+                    "run_at": job.next_run_at,
+                },
+            )
+            result = self.dispatch_inbound(inbound)
             if inspect.isawaitable(result):
                 result = await result
             result_text = str(result.get("text", "")) if isinstance(result, dict) else str(result)

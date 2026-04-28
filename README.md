@@ -2,6 +2,18 @@
 
 XAgent is a Python workspace-aware assistant runtime and CLI.
 
+## Runtime Architecture
+
+当前运行时已经收敛到单一路径：
+
+- `MessageBus` 维护 `inbound` / `outbound` 两条队列
+- `SessionRouter` 是 `inbound` 的唯一消费者，负责把消息路由到目标 `SessionRuntime`
+- `SessionRuntime.handle(inbound)` 执行 turn，并把中间进度与最终结果统一写入 `outbound`
+- `ChannelManager` 统一分发 `outbound`，供 CLI/TUI、HTTP、Feishu 等 channel 消费
+- `TraceChannel` 以 observer 方式旁路记录所有 runtime outbound 事件
+
+也就是说，当前仓库已经不再使用旧的 event bus / message boundary 双轨模型。
+
 ## Quick Start
 
 ### 前置要求
@@ -284,4 +296,7 @@ uv run xagent channel feishu serve
 - Feishu 配置读取：`src/xagent/channel/feishu/config.py`
 - Feishu 官方 SDK 封装：`src/xagent/channel/feishu/client.py`
 - Feishu adapter：`src/xagent/channel/feishu/adapter.py`
-- Runtime bridge：`src/xagent/agent/runtime/channel_bridge.py`
+- Runtime stack 组装：`src/xagent/cli/runtime.py`
+- Session 路由：`src/xagent/agent/runtime/session_router.py`
+- Outbound 分发：`src/xagent/agent/runtime/channel_manager.py`
+- Trace observer：`src/xagent/channel/trace_channel.py`

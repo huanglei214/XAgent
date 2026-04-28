@@ -1,15 +1,10 @@
 """Channel 抽象基类。
 
-openspec 0001-simplify-bus 阶段 4：引入与 nanobot 对齐的 ``BaseChannel``，
-作为飞书 / HTTP / TUI / CLI 等外部通道的统一基类。
-
 核心约定：
 - Channel 负责"对外 IO"——接收外部输入并 ``publish_inbound``、把
   ``OutboundMessage`` 渲染/发送到外部世界。
-- Channel 不关心 SessionRuntime 的内部状态，也不订阅事件总线；
-  所有 outbound 由 ``ChannelManager`` 统一路由而来。
-- 本阶段（阶段 4）仅提供抽象，现有飞书 / TUI 等适配器暂不迁移；
-  迁移在阶段 6 进行。
+- Channel 不关心 SessionRuntime 的内部状态；所有 outbound 由
+  ``ChannelManager`` 统一路由而来。
 """
 
 from __future__ import annotations
@@ -30,6 +25,10 @@ class BaseChannel(ABC):
     #: 通道逻辑名，例如 ``"feishu"`` / ``"http"`` / ``"cli"`` / ``"tui"``；
     #: ``ChannelManager`` 会按 ``OutboundMessage.channel`` 字段选取同名 Channel。
     name: str = ""
+
+    #: 是否旁路观察所有 outbound，而不受 ``msg.channel`` 约束。
+    #: 典型用法是 ``TraceChannel`` 这类只做观测/落盘的 channel。
+    observe_all: bool = False
 
     def __init__(self, bus: MessageBus) -> None:
         """保存 ``MessageBus`` 引用，供 ``publish_inbound`` 使用。"""

@@ -3,10 +3,13 @@ from unittest.mock import AsyncMock, patch
 
 from typer.testing import CliRunner
 
+from xagent.bus.messages import make_progress, make_terminal
+from xagent.bus.queue import MessageBus
 from xagent.cli.main import app
 from xagent.cli.tui.commands import BUILTIN_COMMANDS, filter_commands, get_slash_query, insert_command
 from xagent.cli.tui.tui import (
     SlashCommandCompleter,
+    TuiChannel,
     _ask_user_questions_via_prompt,
     _build_session_picker_values,
     _build_session_picker_row_text,
@@ -336,3 +339,82 @@ class CliChatTests(unittest.TestCase):
 
         result = asyncio.run(_ask_user_questions_via_prompt(_prompt, params))
         self.assertEqual(result.answers[0].selected_labels, ["B"])
+
+
+class TuiChannelTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tui_channel_routes_outbound_messages_to_ui_callbacks(self) -> None:
+        messages = []
+        compactions = []
+        bus = MessageBus()
+        session_id = "s1"
+        channel = TuiChannel(
+            bus,
+            session_id_getter=lambda: session_id,
+            on_message=messages.append,
+            on_compaction_completed=compactions.append,
+        )
+
+        await channel.start()
+        try:
+            await channel.send(
+                make_progress(
+                    correlation_id="c1",
+                    session_id="s1",
+                    session_key="s1",
+                    channel="tui",
+                    chat_id="s1",
+                    source="session_runtime",
+                    event="text_delta",
+                    content="hello",
+                )
+            )
+            await channel.send(
+                make_progress(
+                    correlation_id="c1",
+                    session_id="s1",
+                    session_key="s1",
+                    channel="tui",
+                    chat_id="s1",
+                    source="auto_compact",
+                    event="compact_finished",
+                    extra_metadata={"checkpointed_message_count": 3},
+                )
+            )
+        finally:
+            await channel.stop()
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].content, "hello")
+        self.assertEqual(len(compactions), 1)
+        self.assertEqual(compactions[0].metadata["checkpointed_message_count"], 3)
+
+    async def test_tui_channel_ignores_messages_from_other_session(self) -> None:
+        messages = []
+        compactions = []
+        bus = MessageBus()
+        channel = TuiChannel(
+            bus,
+            session_id_getter=lambda: "s1",
+            on_message=messages.append,
+            on_compaction_completed=compactions.append,
+        )
+
+        await channel.start()
+        try:
+            await channel.send(
+                make_progress(
+                    correlation_id="c1",
+                    session_id="s2",
+                    session_key="s2",
+                    channel="tui",
+                    chat_id="s2",
+                    source="auto_compact",
+                    event="compact_finished",
+                    extra_metadata={"checkpointed_message_count": 1},
+                )
+            )
+        finally:
+            await channel.stop()
+
+        self.assertEqual(messages, [])
+        self.assertEqual(compactions, [])

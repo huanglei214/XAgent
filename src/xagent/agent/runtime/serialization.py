@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from xagent.bus.events import Event
 from xagent.provider.types import Message, message_text
 from xagent.agent.runtime.scheduler import ScheduledJobRecord, ScheduledJobHistoryEntry
 
@@ -52,18 +51,6 @@ def serialize_job_history(entry: ScheduledJobHistoryEntry) -> dict[str, Any]:
         "result_text": entry.result_text,
         "error_text": entry.error_text,
         "attempt": entry.attempt,
-    }
-
-
-def serialize_event(event: Event) -> dict[str, Any]:
-    """Serialize an Event to a JSON-friendly dict with recursively jsonable payload."""
-    return {
-        "event_id": event.event_id,
-        "topic": event.topic,
-        "session_id": event.session_id,
-        "source": event.source,
-        "created_at": event.created_at,
-        "payload": to_jsonable(event.payload),
     }
 
 

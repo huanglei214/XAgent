@@ -39,6 +39,12 @@ class _RecordingChannel(BaseChannel):
         self.sent.append(msg)
 
 
+class _ObserverChannel(_RecordingChannel):
+    """测试用 observer channel：应收到所有 outbound。"""
+
+    observe_all = True
+
+
 class _RaisingChannel(BaseChannel):
     """测试用 Channel：send 时抛异常，验证 ChannelManager 的容错。"""
 
@@ -363,6 +369,36 @@ class ChannelManagerTests(unittest.IsolatedAsyncioTestCase):
             await cm.stop()
 
         self.assertEqual(final.content, "ok")
+
+    async def test_observer_channel_receives_messages_for_all_channels(self) -> None:
+        """observe_all=True 的 channel 应旁路收到所有 outbound。"""
+        bus = MessageBus()
+        cm = ChannelManager(bus)
+        direct = _RecordingChannel(bus, name="cli")
+        observer = _ObserverChannel(bus, name="trace")
+        cm.register_channel(direct)
+        cm.register_channel(observer)
+        await cm.start()
+
+        msg = make_terminal(
+            correlation_id="c1",
+            session_id="s",
+            session_key="k",
+            channel="cli",
+            chat_id="c",
+            source="runtime",
+            content="payload",
+        )
+        await bus.publish_outbound(msg)
+        for _ in range(20):
+            if direct.sent and observer.sent:
+                break
+            await asyncio.sleep(0.01)
+        await cm.stop()
+
+        self.assertEqual(len(direct.sent), 1)
+        self.assertEqual(len(observer.sent), 1)
+        self.assertIs(observer.sent[0], msg)
 
     async def test_register_channel_requires_name(self) -> None:
         """没有 name 的 channel 注册时应直接报错。"""

@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 
 from xagent.agent.compaction import AutoCompactService
 from xagent.agent.memory import create_runtime_memory
-from xagent.bus.events import Event, InMemoryMessageBus
+from xagent.bus.queue import MessageBus
 from xagent.provider.types import Message, TextPart, message_text
 
 
@@ -37,15 +37,9 @@ class AutoCompactServiceTests(unittest.IsolatedAsyncioTestCase):
                 Message(role="user", content=[TextPart(text="u2")]),
                 Message(role="assistant", content=[TextPart(text="a2")]),
             ]
-            bus = InMemoryMessageBus()
-            events = []
-
-            async def _capture(event: Event) -> None:
-                events.append(event)
-
-            bus.subscribe("*", _capture)
+            bus = MessageBus()
             service = AutoCompactService(
-                bus=bus,
+                message_bus=bus,
                 working_memory=memory.working,
                 episodic_memory=memory.episodic,
                 session_id_getter=lambda: "session-1",
@@ -57,12 +51,15 @@ class AutoCompactServiceTests(unittest.IsolatedAsyncioTestCase):
             task = await service.request_if_needed()
             self.assertIsNotNone(task)
             await service.wait_for_all()
+            events = []
+            while not bus.outbound.empty():
+                events.append(bus.outbound.get_nowait())
 
             self.assertEqual(
-                [event.topic for event in events],
-                ["memory.compaction.requested", "memory.compaction.completed"],
+                [event.metadata["_event"] for event in events],
+                ["compact_started", "compact_finished"],
             )
-            self.assertTrue(events[-1].payload["has_checkpoint"])
+            self.assertTrue(events[-1].metadata["has_checkpoint"])
             self.assertEqual(memory.working.messages[0].role, "system")
             self.assertIn("[session-checkpoint", message_text(memory.working.messages[0]))
 
@@ -77,7 +74,7 @@ class AutoCompactServiceTests(unittest.IsolatedAsyncioTestCase):
                 Message(role="assistant", content=[TextPart(text="a2")]),
             ]
             service = AutoCompactService(
-                bus=InMemoryMessageBus(),
+                message_bus=MessageBus(),
                 working_memory=memory.working,
                 episodic_memory=memory.episodic,
                 session_id_getter=lambda: "session-1",

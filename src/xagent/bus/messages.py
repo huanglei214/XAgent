@@ -58,11 +58,13 @@ class OutboundMessage:
 
 
 # ---------------------------------------------------------------------------
-# 阶段 3 新增：OutboundMessage.metadata 的约定键 + 辅助构造函数。
+# OutboundMessage.metadata 的约定键与辅助构造函数。
 #
-# 设计理念（openspec 0001-simplify-bus）：
-# 运行时事件（turn/tool/thinking）和最终回复都走同一条 outbound 队列，
-# 通过 metadata 的约定键来区分语义，便于 ChannelManager 统一分发。
+# 当前运行时约定：
+# - 所有中间进度（turn/tool/thinking/compaction）与最终回复都走同一条
+#   ``MessageBus.outbound`` 队列；
+# - ``ChannelManager`` 和上层 channel/gateway 通过 metadata 里的约定键区分语义；
+# - bus 层不维护 topic/subscriber 模型，只关心 inbound/outbound 两条 FIFO。
 # ---------------------------------------------------------------------------
 
 

@@ -6,8 +6,7 @@
 - 所有"运行时事件"（turn / tool / thinking 等）都编码为
   ``OutboundMessage.metadata``，与最终回复一起走 outbound 队列
 
-本模块是阶段 3 新增；与旧的 ``InMemoryMessageBus`` / ``TypedMessageBus`` 并存，
-上游在阶段 5/6 逐步切换后再删除旧实现。
+本模块现为运行时唯一保留的进程内消息总线实现。
 """
 
 from __future__ import annotations

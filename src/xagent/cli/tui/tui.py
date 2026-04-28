@@ -32,10 +32,11 @@ from xagent.agent.tools.workspace.interaction import (
 )
 from xagent.agent.tool_result_runtime import summarize_tool_result_for_ui
 from xagent.agent.core import AgentAborted
-from xagent.bus.messages import InboundMessage
+from xagent.bus.messages import InboundMessage, OutboundMessage
+from xagent.channel.base import BaseChannel
 from xagent.cli.runtime import (
-    build_local_runtime_boundary,
     build_runtime_agent,
+    build_runtime_stack,
     format_runtime_error,
     get_runtime_status,
     make_external_path_approval_handler,
@@ -54,6 +55,43 @@ DOG_ICON = (
     "      │ ▽  │\n"
     "      ╰────╯"
 )
+
+
+class TuiChannel(BaseChannel):
+    """TUI 输出通道：把 ChannelManager 转发的 outbound 回调给 UI。"""
+
+    name = "tui"
+
+    def __init__(
+        self,
+        bus,
+        *,
+        session_id_getter,
+        on_message,
+        on_compaction_completed,
+    ) -> None:
+        """初始化 TUI 通道并保存 UI 回调。"""
+        super().__init__(bus)
+        self._session_id_getter = session_id_getter
+        self._on_message = on_message
+        self._on_compaction_completed = on_compaction_completed
+
+    async def start(self) -> None:
+        """TUI 通道无需额外启动资源。"""
+        return None
+
+    async def stop(self) -> None:
+        """TUI 通道无需额外停止资源。"""
+        return None
+
+    async def send(self, msg: OutboundMessage) -> None:
+        """把 outbound 消息透传给 UI 层处理。"""
+        if msg.session_id != self._session_id_getter():
+            return
+        if msg.metadata.get("_event") == "compact_finished":
+            self._on_compaction_completed(msg)
+            return
+        self._on_message(msg)
 
 
 def build_header_text(agent) -> str:
@@ -918,10 +956,11 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
     agent = build_runtime_agent(cwd, ask_user_question=_ask_user_questions)
     agent.runtime_mode = "chat"
 
-    session_runtime = build_local_runtime_boundary(
+    runtime_stack = build_runtime_stack(
         agent,
         cwd=cwd,
     )
+    session_runtime = runtime_stack.runtime
 
     def _print_session_restored_notice(
         session_id: str,
@@ -1071,7 +1110,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
             ui_state["thinking_active"] = False
             _invalidate_prompt()
 
-    def _handle_assistant_delta_event(event) -> None:
+    def _handle_assistant_delta_event(event: OutboundMessage) -> None:
         if event.session_id != session_runtime.session_id:
             return
         new_text = str(event.content or "")
@@ -1081,7 +1120,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
         _clear_thinking()
         _invalidate_prompt()
 
-    def _handle_tool_called_event(event) -> None:
+    def _handle_tool_called_event(event: OutboundMessage) -> None:
         if event.session_id != session_runtime.session_id:
             return
         _clear_thinking()
@@ -1098,7 +1137,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
         line.append(summarize_payload(tool_use.input), style="dim")
         console.print(line)
 
-    def _handle_tool_finished_event(event) -> None:
+    def _handle_tool_finished_event(event: OutboundMessage) -> None:
         if event.session_id != session_runtime.session_id:
             return
         _clear_thinking()
@@ -1113,12 +1152,12 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
         line.append(truncated, style=style_name)
         console.print(line)
 
-    def _handle_turn_terminal_event(event) -> None:
+    def _handle_turn_terminal_event(event: OutboundMessage) -> None:
         if event.session_id != session_runtime.session_id:
             return
         _clear_thinking()
 
-    def _handle_compaction_completed_event(event) -> None:
+    def _handle_compaction_completed_event(event: OutboundMessage) -> None:
         nonlocal token_count
         if event.session_id != session_runtime.session_id:
             return
@@ -1141,157 +1180,174 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
         if isinstance(middleware, ApprovalMiddleware):
             middleware.prompt_fn = _prompt_modal
 
-    session_runtime.out_msg_bus.subscribe(_handle_assistant_delta_event, predicate=lambda message: message.kind == "delta")
-    session_runtime.out_msg_bus.subscribe(_handle_tool_called_event, predicate=lambda message: message.kind == "tool_called")
-    session_runtime.out_msg_bus.subscribe(_handle_tool_finished_event, predicate=lambda message: message.kind == "tool_finished")
-    session_runtime.out_msg_bus.subscribe(_handle_turn_terminal_event, predicate=lambda message: message.kind in {"completed", "failed"})
-    session_runtime.out_msg_bus.subscribe(
-        _handle_compaction_completed_event, predicate=lambda message: message.kind == "compaction_completed"
+    def _handle_outbound_message(message: OutboundMessage) -> None:
+        if message.kind in {"completed", "failed"}:
+            _handle_turn_terminal_event(message)
+            return
+        tool_use = message.metadata.get("tool_use")
+        if tool_use is not None:
+            _handle_tool_called_event(message)
+            return
+        result = message.metadata.get("result")
+        if result is not None:
+            _handle_tool_finished_event(message)
+            return
+        if str(message.content or "").strip():
+            _handle_assistant_delta_event(message)
+
+    tui_channel = TuiChannel(
+        runtime_stack.message_bus,
+        session_id_getter=lambda: session_runtime.session_id,
+        on_message=_handle_outbound_message,
+        on_compaction_completed=_handle_compaction_completed_event,
     )
+    runtime_stack.channel_manager.register_channel(tui_channel)
+    await tui_channel.start()
+    await runtime_stack.start()
 
-    with patch_stdout(raw=True):
-        prompt_task = asyncio.create_task(_prompt_once())
-
-        while True:
-            text = await prompt_task
-
-            if not text:
-                prompt_task = asyncio.create_task(_prompt_once())
-                continue
-
-            if text in {"/exit", "/quit"}:
-                _exit_tui()
-                break
-
-            if text == "/help":
-                _print_user_message(text)
-                console.print("[dim]Commands: /help, /new, /resume, /status, /abort, /cancel, /clear, /quit[/dim]")
-                skills = getattr(agent, "skills", [])
-                if skills:
-                    console.print("[dim]Skills:[/dim]")
-                    for skill in skills:
-                        console.print(f"[dim]  /{skill.name} — {skill.description}[/dim]")
-                console.print()
-                prompt_task = asyncio.create_task(_prompt_once())
-                continue
-
-            if text == "/new":
-                _print_user_message(text)
-                _start_new_session()
-                prompt_task = asyncio.create_task(_prompt_once())
-                continue
-
-            if text.startswith("/resume"):
-                _print_user_message(text)
-                requested_session_id = text.split(" ", 1)[1].strip() if " " in text else None
-                await _resume_session(requested_session_id or None)
-                prompt_task = asyncio.create_task(_prompt_once())
-                continue
-
-            if text == "/clear":
-                session_runtime.clear_session()
-                token_count = 0
-                console.clear()
-                _print_header(agent)
-                console.print("[dim]Cleared conversation history.[/dim]")
-                console.print()
-                prompt_task = asyncio.create_task(_prompt_once())
-                continue
-
-            if text == "/status":
-                _print_user_message(text)
-                console.print(f"[dim]{get_runtime_status(agent)}[/dim]")
-                console.print()
-                prompt_task = asyncio.create_task(_prompt_once())
-                continue
-
-            if text in {"/abort", "/cancel"}:
-                _print_user_message(text)
-                if ui_state["streaming"]:
-                    session_runtime.abort()
-                    _print_runtime_block("Cancelling run", ["User requested abort"])
-                else:
-                    console.print("[dim]No active run to abort.[/dim]")
-                    console.print()
-                prompt_task = asyncio.create_task(_prompt_once())
-                continue
-
-            requested_skill_name = None
-            if text.startswith("/"):
-                token = text[1:].split(" ", 1)[0]
-                skills = getattr(agent, "skills", [])
-                if any(skill.name.lower() == token.lower() for skill in skills):
-                    requested_skill_name = token
-                    text = text.split(" ", 1)[1].strip() if " " in text else ""
-                    if not text:
-                        console.print(f"[dim]Selected skill /{token}. Continue typing your request after the command.[/dim]")
-                        console.print()
-                        prompt_task = asyncio.create_task(_prompt_once())
-                        continue
-
-            _print_user_message(text)
-            ui_state["runtime_event_keys"] = set()
-
-            ui_state["streaming"] = True
-            
-            # 重新启动带 "Input anything..." 提示的 prompt
+    try:
+        with patch_stdout(raw=True):
             prompt_task = asyncio.create_task(_prompt_once())
 
-            try:
-                # 初始显示炫酷的扫光动画
-                ui_state["thinking_active"] = True
-                ui_state["thinking_frame"] = 0
-                ui_state["thinking_label"] = "Almost there..."
-                ui_state["streaming_text"] = ""
-                
-                # 独立任务用于更新动画
-                async def animate_thinking():
-                    while ui_state["thinking_active"]:
-                        ui_state["thinking_frame"] += 1
-                        _invalidate_prompt()
-                        await asyncio.sleep(0.08)
+            while True:
+                text = await prompt_task
 
-                asyncio.create_task(animate_thinking())
+                if not text:
+                    prompt_task = asyncio.create_task(_prompt_once())
+                    continue
 
-                inbound = InboundMessage(
-                    content=text,
-                    source="tui",
-                    channel="tui",
-                    sender_id="tui",
-                    chat_id=session_runtime.session_id,
-                    requested_skill_name=requested_skill_name,
-                    session_key_override=session_runtime.session_id,
-                )
-                outbound = await session_runtime.submit_and_wait(inbound)
+                if text in {"/exit", "/quit"}:
+                    _exit_tui()
+                    break
 
-                _clear_thinking()
+                if text == "/help":
+                    _print_user_message(text)
+                    console.print("[dim]Commands: /help, /new, /resume, /status, /abort, /cancel, /clear, /quit[/dim]")
+                    skills = getattr(agent, "skills", [])
+                    if skills:
+                        console.print("[dim]Skills:[/dim]")
+                        for skill in skills:
+                            console.print(f"[dim]  /{skill.name} — {skill.description}[/dim]")
+                    console.print()
+                    prompt_task = asyncio.create_task(_prompt_once())
+                    continue
 
-                if ui_state["streaming_text"]:
-                    # Print the final streaming text with rich so markdown is parsed
-                    _print_assistant_text(ui_state["streaming_text"])
+                if text == "/new":
+                    _print_user_message(text)
+                    _start_new_session()
+                    prompt_task = asyncio.create_task(_prompt_once())
+                    continue
+
+                if text.startswith("/resume"):
+                    _print_user_message(text)
+                    requested_session_id = text.split(" ", 1)[1].strip() if " " in text else None
+                    await _resume_session(requested_session_id or None)
+                    prompt_task = asyncio.create_task(_prompt_once())
+                    continue
+
+                if text == "/clear":
+                    session_runtime.clear_session()
+                    token_count = 0
+                    console.clear()
+                    _print_header(agent)
+                    console.print("[dim]Cleared conversation history.[/dim]")
+                    console.print()
+                    prompt_task = asyncio.create_task(_prompt_once())
+                    continue
+
+                if text == "/status":
+                    _print_user_message(text)
+                    console.print(f"[dim]{get_runtime_status(agent)}[/dim]")
+                    console.print()
+                    prompt_task = asyncio.create_task(_prompt_once())
+                    continue
+
+                if text in {"/abort", "/cancel"}:
+                    _print_user_message(text)
+                    if ui_state["streaming"]:
+                        session_runtime.abort()
+                        _print_runtime_block("Cancelling run", ["User requested abort"])
+                    else:
+                        console.print("[dim]No active run to abort.[/dim]")
+                        console.print()
+                    prompt_task = asyncio.create_task(_prompt_once())
+                    continue
+
+                requested_skill_name = None
+                if text.startswith("/"):
+                    token = text[1:].split(" ", 1)[0]
+                    skills = getattr(agent, "skills", [])
+                    if any(skill.name.lower() == token.lower() for skill in skills):
+                        requested_skill_name = token
+                        text = text.split(" ", 1)[1].strip() if " " in text else ""
+                        if not text:
+                            console.print(f"[dim]Selected skill /{token}. Continue typing your request after the command.[/dim]")
+                            console.print()
+                            prompt_task = asyncio.create_task(_prompt_once())
+                            continue
+
+                _print_user_message(text)
+                ui_state["runtime_event_keys"] = set()
+
+                ui_state["streaming"] = True
+                prompt_task = asyncio.create_task(_prompt_once())
+
+                try:
+                    ui_state["thinking_active"] = True
+                    ui_state["thinking_frame"] = 0
+                    ui_state["thinking_label"] = "Almost there..."
                     ui_state["streaming_text"] = ""
-                    _invalidate_prompt()
-                elif not str(outbound.content or "").strip():
-                    console.print("[italic dim](no output; inspect `xagent trace latest` for the full event trail)[/italic dim]")
+
+                    async def animate_thinking():
+                        while ui_state["thinking_active"]:
+                            ui_state["thinking_frame"] += 1
+                            _invalidate_prompt()
+                            await asyncio.sleep(0.08)
+
+                    asyncio.create_task(animate_thinking())
+
+                    inbound = InboundMessage(
+                        content=text,
+                        source="tui",
+                        channel="tui",
+                        sender_id="tui",
+                        chat_id=session_runtime.session_id,
+                        requested_skill_name=requested_skill_name,
+                        session_key_override=session_runtime.session_id,
+                    )
+                    outbound = await runtime_stack.channel_manager.send_and_wait(inbound)
+
+                    _clear_thinking()
+
+                    if ui_state["streaming_text"]:
+                        _print_assistant_text(ui_state["streaming_text"])
+                        ui_state["streaming_text"] = ""
+                        _invalidate_prompt()
+                    elif not str(outbound.content or "").strip():
+                        console.print("[italic dim](no output; inspect `xagent trace latest` for the full event trail)[/italic dim]")
+                        console.print()
+
+                    token_count = sum(len(message_text(m).split()) for m in agent.messages)
+                    if outbound.kind == "failed":
+                        raise RuntimeError(outbound.error or "Runtime execution failed.")
+                    console.print(f"[italic dim]Completed in {float(outbound.metadata.get('duration_seconds') or 0.0):.2f}s[/italic dim]")
                     console.print()
 
-                token_count = sum(len(message_text(m).split()) for m in agent.messages)
-                if outbound.kind == "failed":
-                    raise RuntimeError(outbound.error or "Runtime execution failed.")
-                console.print(f"[italic dim]Completed in {float(outbound.metadata.get('duration_seconds') or 0.0):.2f}s[/italic dim]")
-                console.print()
+                except AgentAborted:
+                    console.print("[yellow]Aborted current run.[/yellow]")
+                    console.print()
+                except Exception as exc:
+                    console.print(f"[bold red]Error: {exc}[/bold red]")
+                    console.print()
+                    format_runtime_error(exc)
 
-            except AgentAborted:
-                console.print("[yellow]Aborted current run.[/yellow]")
-                console.print()
-            except Exception as exc:
-                console.print(f"[bold red]Error: {exc}[/bold red]")
-                console.print()
-                format_runtime_error(exc)
-
-            finally:
-                ui_state["streaming"] = False
-                _invalidate_prompt()
+                finally:
+                    ui_state["streaming"] = False
+                    _invalidate_prompt()
+    finally:
+        await _cancel_live_prompt()
+        await tui_channel.stop()
+        await runtime_stack.stop()
 
 
 class SlashCommandCompleter(Completer):

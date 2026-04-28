@@ -15,27 +15,22 @@ from uuid import uuid4
 
 from xagent.agent.memory import create_runtime_memory
 from xagent.agent.paths import ensure_config_dir
+from xagent.agent.runtime.channel_manager import ChannelManager
+from xagent.agent.runtime.session_router import SessionRouter
 from xagent.agent.runtime.scheduler import JobScheduler, PersistentJobScheduler, ScheduledJobRecord
 from xagent.agent.runtime.serialization import (
     build_status,
     build_turn_response,
-    serialize_event,
     serialize_job,
     serialize_job_history,
     serialize_message,
     to_jsonable,
 )
-from xagent.bus.events import Event
+from xagent.bus.messages import InboundMessage, OutboundMessage
+from xagent.bus.queue import MessageBus
 from xagent.provider.types import Message, message_text
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class EventStreamHandle:
-    stream_id: str
-    session_id: str
-    events: "queue.Queue[dict[str, Any]]"
 
 
 @dataclass
@@ -127,8 +122,11 @@ class SessionRuntimeManager:
         self._runtimes: dict[str, Any] = {}
         self._schedulers: dict[str, JobScheduler] = {}
         self._job_sessions: dict[str, str] = {}
-        self._streams: dict[str, dict[str, Any]] = {}
         self._persistent_scheduler: Optional[PersistentJobScheduler] = None
+        self._message_bus: Optional[MessageBus] = None
+        self._channel_manager: Optional[ChannelManager] = None
+        self._session_router: Optional[SessionRouter] = None
+        self._managed_stream_tasks: dict[str, asyncio.Task[None]] = {}
 
     def create_session(self, *, session_key: Optional[str] = None) -> str:
         session_id = self._call(self._create_session())
@@ -161,6 +159,7 @@ class SessionRuntimeManager:
         source: str = "runtime.manager",
         request_id: Optional[str] = None,
     ) -> dict[str, Any]:
+        """发送一条文本消息并等待最终回复（兼容接口，内部走新 transport）。"""
         return self._call(
             self._send_message(
                 session_id,
@@ -298,38 +297,74 @@ class SessionRuntimeManager:
     def start_persistent_scheduler(self, *, poll_interval_seconds: float = 1.0) -> None:
         self._call(self._start_persistent_scheduler(poll_interval_seconds=poll_interval_seconds))
 
-    def open_event_stream(self, session_id: str, *, topics: Optional[list[str]] = None) -> EventStreamHandle:
-        return self._call(self._open_event_stream(session_id, topics=topics))
-
-    def close_event_stream(self, stream_id: str) -> None:
-        self._call(self._close_event_stream(stream_id))
-
-    def submit_message(
+    def send_inbound_and_wait(
         self,
-        session_id: str,
-        text: str,
+        message: InboundMessage,
         *,
-        requested_skill_name: Optional[str] = None,
-        source: str = "runtime.manager",
-        request_id: Optional[str] = None,
-    ):
+        timeout_seconds: float = 30.0,
+    ) -> OutboundMessage:
         self._start_loop()
-        return asyncio.run_coroutine_threadsafe(
-            self._send_message(
-                session_id,
-                text,
-                requested_skill_name=requested_skill_name,
-                source=source,
-                request_id=request_id,
-            ),
+        future = asyncio.run_coroutine_threadsafe(
+            self._send_inbound_and_wait(message, timeout_seconds=timeout_seconds),
             self._loop,
         )
+        return future.result(timeout=timeout_seconds + 5.0)
+
+    def open_outbound_stream(
+        self,
+        message: InboundMessage,
+        *,
+        terminal_only: bool = False,
+    ) -> tuple["queue.Queue[OutboundMessage]", Callable[[], None]]:
+        self._start_loop()
+        outbound_queue: "queue.Queue[OutboundMessage]" = queue.Queue()
+        stream_id = uuid4().hex
+
+        async def _start_stream() -> None:
+            await self._ensure_transport()
+
+            async def _pump() -> None:
+                assert self._channel_manager is not None
+                try:
+                    async for outbound in self._channel_manager.open_response_stream(message):
+                        if terminal_only and outbound.kind not in {"completed", "failed"}:
+                            continue
+                        outbound_queue.put_nowait(outbound)
+                finally:
+                    self._managed_stream_tasks.pop(stream_id, None)
+
+            task = asyncio.create_task(_pump(), name=f"managed-outbound-{stream_id[:8]}")
+            self._managed_stream_tasks[stream_id] = task
+
+        asyncio.run_coroutine_threadsafe(_start_stream(), self._loop).result(timeout=5.0)
+
+        def _unsubscribe() -> None:
+            if self._loop is None:
+                return
+            self._loop.call_soon_threadsafe(self._cancel_managed_stream, stream_id)
+
+        return outbound_queue, _unsubscribe
 
     def close(self) -> None:
         if self._loop is None:
             return
 
         async def _shutdown() -> None:
+            for task in list(self._managed_stream_tasks.values()):
+                task.cancel()
+            for task in list(self._managed_stream_tasks.values()):
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            self._managed_stream_tasks.clear()
+            if self._session_router is not None:
+                await self._session_router.stop()
+                self._session_router = None
+            if self._channel_manager is not None:
+                await self._channel_manager.stop()
+                self._channel_manager = None
+            self._message_bus = None
             for scheduler in list(self._schedulers.values()):
                 await scheduler.wait_for_all()
             self._schedulers.clear()
@@ -337,11 +372,6 @@ class SessionRuntimeManager:
             if self._persistent_scheduler is not None:
                 await self._persistent_scheduler.stop()
                 self._persistent_scheduler = None
-            for stream in list(self._streams.values()):
-                unsubscribe = stream.get("unsubscribe")
-                if callable(unsubscribe):
-                    unsubscribe()
-            self._streams.clear()
             for runtime in list(self._runtimes.values()):
                 await self._wait_for_runtime(runtime)
                 close = getattr(runtime, "close", None)
@@ -372,6 +402,11 @@ class SessionRuntimeManager:
         for task in asyncio.all_tasks(loop):
             task.cancel()
 
+    def _cancel_managed_stream(self, stream_id: str) -> None:
+        task = self._managed_stream_tasks.pop(stream_id, None)
+        if task is not None:
+            task.cancel()
+
     def _start_loop(self) -> None:
         if self._loop is not None:
             return
@@ -394,12 +429,12 @@ class SessionRuntimeManager:
         operation = getattr(getattr(coro, "cr_code", None), "co_name", type(coro).__name__)
         self._start_loop()
         logger.info(
-            "[RuntimeManager] _call start: operation=%s loop_running=%s thread_alive=%s runtimes=%d streams=%d",
+            "[RuntimeManager] _call start: operation=%s loop_running=%s thread_alive=%s runtimes=%d managed_streams=%d",
             operation,
             self._loop.is_running() if self._loop is not None else False,
             self._thread.is_alive() if self._thread is not None else False,
             len(self._runtimes),
-            len(self._streams),
+            len(self._managed_stream_tasks),
         )
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
@@ -408,20 +443,18 @@ class SessionRuntimeManager:
             return result
         except concurrent.futures.TimeoutError as exc:
             logger.error(
-                "[RuntimeManager] _call timeout: operation=%s loop_running=%s thread_alive=%s pending_streams=%d",
+                "[RuntimeManager] _call timeout: operation=%s loop_running=%s thread_alive=%s pending_managed_streams=%d",
                 operation,
                 self._loop.is_running() if self._loop is not None else False,
                 self._thread.is_alive() if self._thread is not None else False,
-                len(self._streams),
+                len(self._managed_stream_tasks),
             )
             self._log_thread_stacks()
             raise RuntimeError("Runtime manager operation timed out.") from exc
 
     async def _create_session(self) -> str:
-        runtime = self._new_runtime(session_id=None)
-        self._runtimes[runtime.session_id] = runtime
-        self._session_keys.set_session_id(runtime.session_id, runtime.session_id)
-        return runtime.session_id
+        await self._ensure_transport()
+        return self._create_runtime_session()
 
     async def _list_sessions(self) -> list[dict[str, Any]]:
         memory = create_runtime_memory(self.cwd)
@@ -482,24 +515,45 @@ class SessionRuntimeManager:
         source: str = "runtime.manager",
         request_id: Optional[str] = None,
     ) -> dict[str, Any]:
-        logger.info(
-            "[RuntimeManager] _send_message start: session_id=%s source=%s text=%.100s",
-            session_id,
-            source,
-            text,
-        )
+        """兼容入口：内部改用 InboundMessage + ChannelManager 路径。"""
+        await self._ensure_transport()
         runtime = await self._ensure_runtime(session_id, restore=True)
         if runtime is None:
             raise KeyError(session_id)
-        turn_result = await runtime.publish_user_message(
-            text,
+        correlation_id = request_id or uuid4().hex
+        inbound = InboundMessage(
+            content=text,
             source=source,
+            channel="managed",
+            sender_id="managed",
+            chat_id=session_id,
             requested_skill_name=requested_skill_name,
-            request_id=request_id,
+            correlation_id=correlation_id,
+            session_key_override=session_id,
         )
+        outbound = await self._send_inbound_and_wait(inbound, timeout_seconds=30.0)
+        if outbound.kind == "failed":
+            raise RuntimeError(outbound.error or "Runtime execution failed.")
+        message = outbound.metadata.get("message")
+        duration_seconds = outbound.metadata.get("duration_seconds")
+        if not isinstance(message, Message):
+            raise RuntimeError("Managed inbound did not return Message in outbound.metadata['message']")
         await self._wait_for_runtime(runtime)
-        logger.info("[RuntimeManager] _send_message done: session_id=%s", session_id)
-        return build_turn_response(runtime, turn_result.message, turn_result.duration_seconds)
+        return build_turn_response(
+            runtime,
+            message,
+            float(duration_seconds) if duration_seconds is not None else None,
+        )
+
+    async def _send_inbound_and_wait(
+        self,
+        message: InboundMessage,
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> OutboundMessage:
+        await self._ensure_transport()
+        assert self._channel_manager is not None
+        return await self._channel_manager.send_and_wait(message, timeout=timeout_seconds)
 
     async def _schedule_message(
         self,
@@ -510,12 +564,14 @@ class SessionRuntimeManager:
         requested_skill_name: Optional[str] = None,
         source: str = "runtime.manager.schedule",
     ) -> dict[str, Any]:
+        await self._ensure_transport()
         runtime = await self._ensure_runtime(session_id, restore=True)
         if runtime is None:
             raise KeyError(session_id)
         scheduler = self._schedulers.get(runtime.session_id)
         if scheduler is None:
-            scheduler = JobScheduler(bus=runtime.bus)
+            assert self._message_bus is not None
+            scheduler = JobScheduler(bus=self._message_bus)
             self._schedulers[runtime.session_id] = scheduler
         job = await scheduler.schedule_once(
             session_id=runtime.session_id,
@@ -666,65 +722,47 @@ class SessionRuntimeManager:
         session_id = self._job_sessions.get(job_id)
         if session_id is None:
             raise KeyError(job_id)
+        await self._ensure_transport()
+        assert self._channel_manager is not None
         runtime = await self._ensure_runtime(session_id, restore=True)
         if runtime is None:
             raise KeyError(session_id)
         scheduler_task = self._schedulers.get(runtime.session_id)
         if scheduler_task is not None:
             await scheduler_task.wait_for_job(job_id)
-        await self._wait_for_runtime(runtime)
-        if not runtime.messages:
-            raise RuntimeError(f"Scheduled job '{job_id}' completed without producing messages.")
-        final_message = runtime.messages[-1]
-        return build_turn_response(runtime, final_message, None, job_id=job_id)
+        stream = self._channel_manager.open_session_stream(runtime.session_id)
+        try:
+            while True:
+                try:
+                    outbound = await asyncio.wait_for(stream.__anext__(), timeout=60.0)
+                except asyncio.TimeoutError as exc:
+                    raise RuntimeError(f"Timed out waiting for scheduled job '{job_id}'") from exc
+                if outbound.correlation_id != job_id:
+                    continue
+                if outbound.kind == "failed":
+                    raise RuntimeError(outbound.error or "Scheduled job execution failed.")
+                if outbound.kind != "completed":
+                    continue
+                message = outbound.metadata.get("message")
+                duration_seconds = outbound.metadata.get("duration_seconds")
+                if not isinstance(message, Message):
+                    raise RuntimeError("Scheduled job did not return Message in outbound.metadata['message']")
+                await self._wait_for_runtime(runtime)
+                return build_turn_response(
+                    runtime,
+                    message,
+                    float(duration_seconds) if duration_seconds is not None else None,
+                    job_id=job_id,
+                )
+        finally:
+            await stream.aclose()
 
     async def _start_persistent_scheduler(self, *, poll_interval_seconds: float = 1.0) -> None:
         scheduler = await self._ensure_persistent_scheduler(poll_interval_seconds=poll_interval_seconds)
         await scheduler.start()
 
-    async def _open_event_stream(
-        self,
-        session_id: str,
-        *,
-        topics: Optional[list[str]] = None,
-    ) -> EventStreamHandle:
-        logger.info("[RuntimeManager] _open_event_stream start: session_id=%s topics=%s", session_id, topics)
-        runtime = await self._ensure_runtime(session_id, restore=True)
-        if runtime is None:
-            raise KeyError(session_id)
-
-        stream_id = uuid4().hex
-        event_queue: "queue.Queue[dict[str, Any]]" = queue.Queue()
-        topic_filter = set(topics or [])
-
-        async def _handler(event: Event) -> None:
-            if event.session_id != runtime.session_id:
-                return
-            if topic_filter and event.topic not in topic_filter:
-                return
-            event_queue.put_nowait(serialize_event(event))
-
-        unsubscribe = runtime.bus.subscribe("*", _handler)
-        self._streams[stream_id] = {
-            "session_id": runtime.session_id,
-            "queue": event_queue,
-            "unsubscribe": unsubscribe,
-        }
-        logger.info("[RuntimeManager] _open_event_stream done: session_id=%s stream_id=%s", session_id, stream_id)
-        return EventStreamHandle(stream_id=stream_id, session_id=runtime.session_id, events=event_queue)
-
-    async def _close_event_stream(self, stream_id: str) -> None:
-        logger.info("[RuntimeManager] _close_event_stream start: stream_id=%s", stream_id)
-        stream = self._streams.pop(stream_id, None)
-        if stream is None:
-            logger.info("[RuntimeManager] _close_event_stream noop: stream_id=%s", stream_id)
-            return
-        unsubscribe = stream.get("unsubscribe")
-        if callable(unsubscribe):
-            unsubscribe()
-        logger.info("[RuntimeManager] _close_event_stream done: stream_id=%s", stream_id)
-
     async def _ensure_runtime(self, session_id: str, *, restore: bool) -> Any | None:
+        await self._ensure_transport()
         runtime = self._runtimes.get(session_id)
         if runtime is not None:
             return runtime
@@ -744,30 +782,98 @@ class SessionRuntimeManager:
             return self._persistent_scheduler
         scheduler = PersistentJobScheduler(
             cwd=self.cwd,
-            dispatch=self._dispatch_persistent_job,
+            dispatch_inbound=self._dispatch_persistent_inbound,
             poll_interval_seconds=poll_interval_seconds,
         )
         self._persistent_scheduler = scheduler
         return scheduler
 
+    async def _dispatch_persistent_inbound(self, inbound: InboundMessage) -> dict[str, Any]:
+        """PersistentJobScheduler 的 dispatch 入口：按 inbound 语义触发并返回结果 dict。"""
+        session_id = inbound.chat_id
+        runtime = await self._ensure_runtime(session_id, restore=True)
+        if runtime is None:
+            raise KeyError(session_id)
+        outbound = await self._send_inbound_and_wait(inbound, timeout_seconds=60.0)
+        if outbound.kind == "failed":
+            raise RuntimeError(outbound.error or "Scheduled job execution failed.")
+        message = outbound.metadata.get("message")
+        duration_seconds = outbound.metadata.get("duration_seconds")
+        if not isinstance(message, Message):
+            raise RuntimeError("Scheduled job did not return Message in outbound.metadata['message']")
+        await self._wait_for_runtime(runtime)
+        return {
+            "job_id": inbound.correlation_id,
+            "session_id": session_id,
+            "message": serialize_message(message),
+            "text": message_text(message),
+            "duration_seconds": float(duration_seconds) if duration_seconds is not None else None,
+        }
+
+    async def _ensure_transport(self) -> None:
+        if self._channel_manager is not None and self._session_router is not None:
+            return
+        self._message_bus = MessageBus()
+        self._channel_manager = ChannelManager(self._message_bus)
+        self._session_router = SessionRouter(
+            bus=self._message_bus,
+            resolver=self._resolve_managed_session_id,
+            provider=self._provide_runtime,
+        )
+        await self._channel_manager.start()
+        await self._session_router.start()
+
     def _new_runtime(self, *, session_id: Optional[str]) -> Any:
         agent = self.agent_factory()
-        _, runtime = self.runtime_factory(agent, session_id=session_id, cwd=self.cwd)
+        _, runtime = self.runtime_factory(
+            agent,
+            session_id=session_id,
+            cwd=self.cwd,
+            message_bus=self._message_bus,
+        )
+        return runtime
+
+    def _create_runtime_session(self) -> str:
+        runtime = self._new_runtime(session_id=None)
+        self._runtimes[runtime.session_id] = runtime
+        self._session_keys.set_session_id(runtime.session_id, runtime.session_id)
+        return runtime.session_id
+
+    def _resolve_managed_session_id(self, session_key: str) -> str:
+        return self._session_keys.resolve_session_id(
+            session_key,
+            session_exists=self._session_exists_sync,
+            create_session=self._create_runtime_session,
+        )
+
+    def _session_exists_sync(self, session_id: str) -> Any | None:
+        if session_id in self._runtimes:
+            return {"session_id": session_id}
+        memory = create_runtime_memory(self.cwd)
+        if memory.episodic.session_exists(session_id):
+            return {"session_id": session_id}
+        return None
+
+    async def _provide_runtime(self, session_id: str) -> Any:
+        runtime = await self._ensure_runtime(session_id, restore=True)
+        if runtime is None:
+            raise KeyError(session_id)
         return runtime
 
     async def _dispatch_persistent_job(self, job: ScheduledJobRecord) -> dict[str, Any]:
-        runtime = await self._ensure_runtime(job.session_id, restore=True)
-        if runtime is None:
-            raise KeyError(job.session_id)
-        turn_result = await runtime.publish_scheduled_job(
-            job_id=job.job_id,
-            text=job.text,
-            requested_skill_name=job.requested_skill_name,
+        """把 ``ScheduledJobRecord`` 适配成 ``InboundMessage`` 后复用统一 dispatch。"""
+        inbound = InboundMessage(
+            content=job.text,
             source=job.source,
-            run_at=job.next_run_at,
+            channel="scheduler",
+            sender_id="scheduler",
+            chat_id=job.session_id,
+            requested_skill_name=job.requested_skill_name,
+            correlation_id=job.job_id,
+            session_key_override=job.session_id,
+            metadata={"job_id": job.job_id, "run_at": job.next_run_at},
         )
-        await self._wait_for_runtime(runtime)
-        return build_turn_response(runtime, turn_result.message, turn_result.duration_seconds, job_id=job.job_id)
+        return await self._dispatch_persistent_inbound(inbound)
 
     async def _wait_for_runtime(self, runtime: Any, *, timeout: float = 5.0) -> None:
         wait_for_background_tasks = getattr(runtime, "wait_for_background_tasks", None)

@@ -8,9 +8,15 @@ from pydantic import BaseModel
 
 from xagent.agent.core import Agent, AgentAborted
 from xagent.agent.paths import get_trace_artifacts_dir, get_trace_index_file
+from xagent.bus.messages import InboundMessage
 from xagent.provider.types import Message, TextPart, ToolUsePart, message_text
 from xagent.agent.tools import Tool, ToolContext, ToolResult
-from xagent.cli.runtime import make_external_path_approval_handler, run_agent_turn, run_agent_turn_stream
+from xagent.cli.runtime import (
+    build_runtime_stack,
+    make_external_path_approval_handler,
+    run_agent_turn,
+    run_agent_turn_stream,
+)
 from xagent.agent.tools.workspace.files import read_file_tool
 
 
@@ -170,6 +176,53 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshots[:2], ["par", "partial"])
         self.assertEqual(tool_started, ["echo_tool"])
         self.assertEqual(tool_finished, [("echo_tool", False)])
+
+    async def test_trace_channel_records_runtime_outbound_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent = Agent(
+                provider=_SuccessProvider(),
+                model="ep-test",
+                system_prompt="You are XAgent",
+                tools=[],
+                cwd=str(root),
+            )
+            agent.provider_name = "ark"
+            agent.runtime_mode = "run"
+
+            stack = build_runtime_stack(agent, session_id="trace-run", cwd=str(root))
+            await stack.start()
+            try:
+                outbound = await stack.channel_manager.send_and_wait(
+                    InboundMessage(
+                        content="trace me",
+                        source="cli.run",
+                        channel="cli",
+                        sender_id="cli",
+                        chat_id="trace-run",
+                    ),
+                    timeout=5.0,
+                )
+                trace_path = agent.last_trace_recorder.path
+                event_types = []
+                for _ in range(50):
+                    events = [
+                        json.loads(line)
+                        for line in trace_path.read_text(encoding="utf-8").splitlines()
+                    ]
+                    event_types = [event["event_type"] for event in events]
+                    if "runtime_completed" in event_types:
+                        break
+                    await asyncio.sleep(0.02)
+            finally:
+                await stack.stop()
+
+            self.assertEqual(outbound.kind, "completed")
+
+        self.assertIn("runtime_turn_start", event_types)
+        self.assertIn("runtime_tool_use", event_types)
+        self.assertIn("runtime_tool_result", event_types)
+        self.assertIn("runtime_completed", event_types)
 
     async def test_failure_trace_keeps_replay_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

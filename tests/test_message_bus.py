@@ -1,8 +1,4 @@
-"""MessageBus（两条 asyncio.Queue）单元测试。
-
-覆盖阶段 3 新增的 ``xagent.bus.queue.MessageBus`` 与
-``xagent.bus.messages`` 中的辅助构造函数（``make_progress`` / ``make_terminal``）。
-"""
+"""MessageBus（两条 asyncio.Queue）与 outbound 语义辅助函数的单元测试。"""
 
 import asyncio
 import unittest
@@ -105,6 +101,19 @@ class MessageBusTests(unittest.IsolatedAsyncioTestCase):
 
 
 class OutboundMessageBuildersTests(unittest.TestCase):
+    def test_inbound_message_uses_feishu_private_session_key_shape(self) -> None:
+        """InboundMessage 在 Feishu 私聊场景应生成 user 维度 session_key。"""
+        message = InboundMessage(
+            content="hello",
+            source="channel.feishu",
+            channel="feishu",
+            sender_id="user-1",
+            chat_id="chat-1",
+            metadata={"chat_type": "p2p"},
+        )
+
+        self.assertEqual(message.session_key, "feishu:user:user-1")
+
     def test_make_progress_sets_progress_and_event_flags(self) -> None:
         """make_progress 应自动打上 _progress 与 _event 标记。"""
         msg = make_progress(

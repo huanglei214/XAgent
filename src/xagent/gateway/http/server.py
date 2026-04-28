@@ -11,6 +11,7 @@ from typing import Any, Callable, Protocol
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
+from xagent.agent.runtime.serialization import serialize_message, to_jsonable
 from xagent.bus.messages import InboundMessage
 
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -152,11 +153,18 @@ def _send_websocket_json(handler: BaseHTTPRequestHandler, payload: dict) -> None
 
 def _outbound_to_event(message) -> dict:
     topic = OUTBOUND_TOPIC_MAP.get(message.kind, message.kind)
-    payload: dict[str, object] = dict(message.metadata or {})
+    payload: dict[str, object] = to_jsonable(dict(message.metadata or {}))
     if message.kind == "delta":
         payload["text"] = message.content
     elif message.kind == "completed":
-        payload.setdefault("message", {"role": "assistant", "content": [{"type": "text", "text": message.content}], "text": message.content})
+        completed_message = payload.get("message")
+        if hasattr(completed_message, "model_dump"):
+            payload["message"] = serialize_message(completed_message)
+        else:
+            payload.setdefault(
+                "message",
+                {"role": "assistant", "content": [{"type": "text", "text": message.content}], "text": message.content},
+            )
         payload.setdefault("duration_seconds", message.metadata.get("duration_seconds") if message.metadata else None)
     elif message.kind == "failed":
         payload["error"] = message.error
@@ -342,7 +350,9 @@ def build_gateway_handler(manager: GatewayRuntimeBoundary):
                     return
                 response = {
                     "session_id": outbound.session_id,
-                    "message": outbound.metadata.get("message")
+                    "message": serialize_message(outbound.metadata["message"])
+                    if hasattr(outbound.metadata.get("message"), "model_dump")
+                    else outbound.metadata.get("message")
                     or {
                         "role": "assistant",
                         "content": [{"type": "text", "text": outbound.content}],

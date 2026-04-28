@@ -4,10 +4,13 @@ import unittest
 from base64 import b64encode
 from hashlib import sha1
 from tempfile import TemporaryDirectory
+from uuid import uuid4
 
 from xagent.agent.memory import create_runtime_memory
-from xagent.agent.runtime import ManagedRuntimeBoundary, SessionRuntime
-from xagent.bus.events import InMemoryMessageBus
+from xagent.agent.runtime import SessionRuntime
+from xagent.cli.runtime import ManagerFacingRuntimeAdapter
+from xagent.bus.messages import InboundMessage
+from xagent.bus.queue import MessageBus
 from xagent.provider.types import Message, TextPart
 from xagent.agent.runtime.manager import SessionRuntimeManager
 from xagent.gateway.http import build_gateway_handler
@@ -35,9 +38,9 @@ class _GatewayAgent:
         self.abort_calls += 1
 
 
-def _build_test_runtime(agent, *, session_id=None, cwd=None, bus=None):
+def _build_test_runtime(agent, *, session_id=None, cwd=None, message_bus=None):
     memory = create_runtime_memory(cwd or ".", agent=agent)
-    message_bus = bus or InMemoryMessageBus()
+    message_bus = message_bus or MessageBus()
 
     async def _turn_runner(prompt, *, on_assistant_delta, on_tool_use, on_tool_result):
         reply_text = f"echo:{prompt}"
@@ -52,34 +55,45 @@ def _build_test_runtime(agent, *, session_id=None, cwd=None, bus=None):
 
     runtime = SessionRuntime(
         session_id=session_id or memory.episodic.new_session_id(),
-        bus=message_bus,
         turn_runner=_turn_runner,
         agent=agent,
         memory=memory,
+        message_bus=message_bus,
     )
     return message_bus, runtime
 
 
-def _build_gateway_boundary(tmp: str) -> ManagedRuntimeBoundary:
+def _build_gateway_boundary(tmp: str) -> ManagerFacingRuntimeAdapter:
     manager = SessionRuntimeManager(
         cwd=tmp,
         agent_factory=_GatewayAgent,
         runtime_factory=_build_test_runtime,
     )
-    return ManagedRuntimeBoundary(manager=manager)
+    return ManagerFacingRuntimeAdapter(manager=manager)
 
 
 class GatewayBoundaryTests(unittest.TestCase):
-    def test_manager_creates_session_sends_message_and_reports_status(self) -> None:
+    def test_boundary_creates_session_sends_and_reports_status(self) -> None:
         with TemporaryDirectory() as tmp:
             manager = _build_gateway_boundary(tmp)
             try:
                 session_id = manager.create_session()
                 self.assertIsInstance(session_id, str)
 
-                response = manager.send_message(session_id, "hello")
-                self.assertEqual(response["session_id"], session_id)
-                self.assertEqual(response["text"], "echo:hello")
+                outbound = manager.send_and_wait(
+                    InboundMessage(
+                        content="hello",
+                        source="gateway.http",
+                        channel="gateway",
+                        sender_id="gateway",
+                        chat_id=session_id,
+                        correlation_id=uuid4().hex,
+                        session_key_override=session_id,
+                    )
+                )
+                self.assertEqual(outbound.session_id, session_id)
+                self.assertEqual(outbound.content, "echo:hello")
+                self.assertEqual(outbound.kind, "completed")
 
                 status = manager.get_session_status(session_id)
                 self.assertIsNotNone(status)
@@ -94,14 +108,12 @@ class GatewayBoundaryTests(unittest.TestCase):
             finally:
                 manager.close()
 
-    def test_manager_returns_none_for_unknown_session(self) -> None:
+    def test_boundary_returns_none_for_unknown_session(self) -> None:
         with TemporaryDirectory() as tmp:
             manager = _build_gateway_boundary(tmp)
             try:
                 self.assertIsNone(manager.get_session_status("missing"))
                 self.assertIsNone(manager.get_session_messages("missing"))
-                with self.assertRaises(KeyError):
-                    manager.send_message("missing", "hello")
             finally:
                 manager.close()
 

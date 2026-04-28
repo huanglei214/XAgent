@@ -9,7 +9,7 @@ openspec 0001-simplify-bus 阶段 4：实现 ``ChannelManager``，作为
 2. **按 channel 名转发**：根据 ``OutboundMessage.channel`` 选取已注册的
    ``BaseChannel`` 实例并调用其 ``send``。
 
-本阶段仅新增此模块与测试；现有 ``message_boundary`` 不做拆除，阶段 5+
+本模块负责消费 ``MessageBus.outbound`` 并向已注册 channel 与 per-request 响应流分发消息。
 才会迁移上游到新接口。
 """
 
@@ -43,6 +43,7 @@ class ChannelManager:
         self._bus = bus
         self._channels: dict[str, BaseChannel] = {}
         self._response_registry: dict[str, asyncio.Queue[OutboundMessage]] = {}
+        self._session_registry: dict[str, set[asyncio.Queue[OutboundMessage]]] = {}
         self._registry_lock = asyncio.Lock()
         self._task: Optional[asyncio.Task[None]] = None
         self._started = False
@@ -119,6 +120,14 @@ class ChannelManager:
         """
         return _ResponseStream(self, inbound)
 
+    def open_session_stream(self, session_id: str) -> "_SessionStream":
+        """返回某个 session 的持续 outbound 流。
+
+        与 ``open_response_stream`` 不同，此流不会自动 publish inbound，也不会在
+        terminal 后自动结束；调用方需在不再需要时显式 ``aclose()``。
+        """
+        return _SessionStream(self, session_id)
+
     # ------------------------------------------------------------------
     # 内部辅助
     # ------------------------------------------------------------------
@@ -139,6 +148,28 @@ class ChannelManager:
         async with self._registry_lock:
             self._response_registry.pop(correlation_id, None)
 
+    async def _register_session(self, session_id: str) -> "asyncio.Queue[OutboundMessage]":
+        """为某个 session 注册一条持续流 queue。"""
+        queue: asyncio.Queue[OutboundMessage] = asyncio.Queue()
+        async with self._registry_lock:
+            listeners = self._session_registry.setdefault(session_id, set())
+            listeners.add(queue)
+        return queue
+
+    async def _unregister_session(
+        self,
+        session_id: str,
+        queue: "asyncio.Queue[OutboundMessage]",
+    ) -> None:
+        """清理某个 session 的持续流 queue。"""
+        async with self._registry_lock:
+            listeners = self._session_registry.get(session_id)
+            if not listeners:
+                return
+            listeners.discard(queue)
+            if not listeners:
+                self._session_registry.pop(session_id, None)
+
     async def _dispatch_loop(self) -> None:
         """持续从 outbound 队列取消息，fan-out 到 per-request queue + 转发到 channel。"""
         while True:
@@ -158,14 +189,27 @@ class ChannelManager:
                     msg.correlation_id,
                 )
         # 2. 按 channel 名转发
-        channel = self._channels.get(msg.channel)
-        if channel is not None:
+        for session_queue in list(self._session_registry.get(msg.session_id, ())):
+            try:
+                session_queue.put_nowait(msg)
+            except asyncio.QueueFull:
+                logger.warning("session queue 满，丢弃 session_id=%s", msg.session_id)
+        targets: list[BaseChannel] = []
+        direct_channel = self._channels.get(msg.channel)
+        if direct_channel is not None:
+            targets.append(direct_channel)
+        for channel in self._channels.values():
+            if channel is direct_channel:
+                continue
+            if getattr(channel, "observe_all", False):
+                targets.append(channel)
+        for channel in targets:
             try:
                 await channel.send(msg)
             except Exception:  # noqa: BLE001 - 吞异常避免影响其他 request
                 logger.exception(
                     "Channel %s 发送失败；correlation_id=%s",
-                    msg.channel,
+                    getattr(channel, "name", msg.channel),
                     msg.correlation_id,
                 )
 
@@ -209,4 +253,33 @@ class _ResponseStream:
         self._closed = True
         if self._queue is not None:
             await self._manager._unregister_response(self._inbound.correlation_id)
+            self._queue = None
+
+
+class _SessionStream:
+    """``open_session_stream`` 返回的持续 session 级 async iterator。"""
+
+    def __init__(self, manager: ChannelManager, session_id: str) -> None:
+        self._manager = manager
+        self._session_id = session_id
+        self._queue: Optional[asyncio.Queue[OutboundMessage]] = None
+        self._closed = False
+
+    def __aiter__(self) -> "_SessionStream":
+        return self
+
+    async def __anext__(self) -> OutboundMessage:
+        if self._closed:
+            await self.aclose()
+            raise StopAsyncIteration
+        if self._queue is None:
+            self._queue = await self._manager._register_session(self._session_id)
+        return await self._queue.get()
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._queue is not None:
+            await self._manager._unregister_session(self._session_id, self._queue)
             self._queue = None

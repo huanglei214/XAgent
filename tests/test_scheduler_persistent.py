@@ -66,13 +66,13 @@ class PersistentJobSchedulerTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             dispatched = []
 
-            async def _dispatch(job):
-                dispatched.append(job.job_id)
-                return {"job_id": job.job_id, "text": f"done:{job.text}"}
+            async def _dispatch_inbound(inbound):
+                dispatched.append(inbound.correlation_id)
+                return {"job_id": inbound.correlation_id, "text": f"done:{inbound.content}"}
 
             scheduler = PersistentJobScheduler(
                 cwd=tmp,
-                dispatch=_dispatch,
+                dispatch_inbound=_dispatch_inbound,
                 poll_interval_seconds=0.01,
             )
 
@@ -92,13 +92,13 @@ class PersistentJobSchedulerTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             dispatched = []
 
-            async def _dispatch(job):
-                dispatched.append(job.job_id)
-                return {"job_id": job.job_id, "text": f"done:{job.text}"}
+            async def _dispatch_inbound(inbound):
+                dispatched.append(inbound.correlation_id)
+                return {"job_id": inbound.correlation_id, "text": f"done:{inbound.content}"}
 
             scheduler = PersistentJobScheduler(
                 cwd=tmp,
-                dispatch=_dispatch,
+                dispatch_inbound=_dispatch_inbound,
                 poll_interval_seconds=0.01,
                 clock=lambda: 100.0,
             )
