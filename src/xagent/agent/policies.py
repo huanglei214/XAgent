@@ -6,7 +6,7 @@ import shlex
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import typer
 
@@ -313,7 +313,7 @@ class ApprovalStore:
 class ApprovalMiddleware(AgentMiddleware):
     """在执行变更工具前拦截并请求用户审批。"""
 
-    def __init__(self, approval_store: ApprovalStore, prompt_fn: Callable[[str], str] | None = None) -> None:
+    def __init__(self, approval_store: ApprovalStore, prompt_fn: Callable[[str], Any] | None = None) -> None:
         self.approval_store = approval_store
         self.prompt_fn = prompt_fn or (lambda prompt: typer.prompt(prompt, default="n"))
 

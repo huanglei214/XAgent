@@ -384,7 +384,7 @@ def _sort_key(item: Dict[str, Any]) -> str:
 
 class TraceMiddleware(AgentMiddleware):
     def __init__(self) -> None:
-        self._started = None
+        self._started: float | None = None
         self._model_call_index = 0
 
     async def before_agent_run(self, *, agent, user_text: str) -> None:

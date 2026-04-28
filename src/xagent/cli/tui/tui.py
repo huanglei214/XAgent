@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -25,7 +25,7 @@ from prompt_toolkit.styles import Style
 
 from xagent.agent.policies import ApprovalMiddleware
 from xagent.agent.session import SessionSummary
-from xagent.agent.tools.workspace.interaction import (
+from xagent.agent.tools.interaction import (
     AskUserQuestionAnswer,
     AskUserQuestionInput,
     AskUserQuestionResultData,
@@ -587,7 +587,7 @@ def _read_input() -> str:
 
 async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional[str] = None) -> None:
     """TUI 主入口 — 透明背景 + 固定底部输入 panel（非全屏）。"""
-    ui_state = {
+    ui_state: dict[str, Any] = {
         "streaming": False,
         "streaming_hint": "",
         "thinking_active": False,
@@ -652,7 +652,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
         event.current_buffer.cursor_position = len(event.current_buffer.text)
         event.current_buffer.validate_and_handle()
 
-    session = None
+    session: PromptSession[str]
     prompt_task: Optional[asyncio.Task[str]] = None
 
     def _invalidate_prompt() -> None:
@@ -933,7 +933,7 @@ async def run_tui(cwd: str, *, resume: bool = False, resume_session_id: Optional
         )
 
         try:
-            app = Application(
+            app: Application[Optional[str]] = Application(
                 layout=Layout(root, focused_element=search_window),
                 key_bindings=picker_bindings,
                 full_screen=True,

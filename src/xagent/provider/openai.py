@@ -1,9 +1,9 @@
 import json
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 from openai import AsyncOpenAI
 
-from xagent.provider.types import Message, ModelConfig, ModelRequest, TextPart, ToolUsePart
+from xagent.provider.types import ContentPart, Message, ModelConfig, ModelRequest, TextPart, ToolUsePart
 
 
 class OpenAIChatProvider:
@@ -26,8 +26,8 @@ class OpenAIChatProvider:
     async def complete(self, request: ModelRequest) -> Message:
         response = await self._client.chat.completions.create(
             model=request.model,
-            messages=_to_openai_messages(request),
-            tools=request.tools or None,
+            messages=cast(Any, _to_openai_messages(request)),
+            tools=cast(Any, request.tools or None),
             temperature=request.temperature,
             max_tokens=request.max_tokens,
         )
@@ -36,8 +36,8 @@ class OpenAIChatProvider:
     async def stream_complete(self, request: ModelRequest) -> AsyncIterator[Message]:
         stream = await self._client.chat.completions.create(
             model=request.model,
-            messages=_to_openai_messages(request),
-            tools=request.tools or None,
+            messages=cast(Any, _to_openai_messages(request)),
+            tools=cast(Any, request.tools or None),
             temperature=request.temperature,
             max_tokens=request.max_tokens,
             stream=True,
@@ -71,7 +71,7 @@ class OpenAIChatProvider:
     async def stream_text(self, request: ModelRequest) -> AsyncIterator[str]:
         stream = await self._client.chat.completions.create(
             model=request.model,
-            messages=_to_openai_messages(request),
+            messages=cast(Any, _to_openai_messages(request)),
             temperature=request.temperature,
             max_tokens=request.max_tokens,
             stream=True,
@@ -127,7 +127,7 @@ def _to_openai_messages(request: ModelRequest) -> list[dict[str, Any]]:
 
 
 def _from_openai_message(message: Any) -> Message:
-    content = []
+    content: list[ContentPart] = []
     if message.content:
         content.append(TextPart(text=message.content))
     for tool_call in message.tool_calls or []:
@@ -143,7 +143,7 @@ def _from_openai_message(message: Any) -> Message:
 
 
 def _snapshot_message(text: str, tool_calls: dict[int, dict[str, Any]]) -> Message:
-    content = []
+    content: list[ContentPart] = []
     if text:
         content.append(TextPart(text=text))
 

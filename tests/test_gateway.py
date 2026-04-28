@@ -2,7 +2,6 @@ import json
 import socket
 import unittest
 from base64 import b64encode
-from hashlib import sha1
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 

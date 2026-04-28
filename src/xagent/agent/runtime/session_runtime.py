@@ -10,7 +10,6 @@ from xagent.agent.memory import RuntimeMemory, create_runtime_memory
 from xagent.agent.session import SessionLoadMetadata, SessionStore, SessionSummary
 from xagent.bus.messages import (
     InboundMessage,
-    OutboundMessage,
     make_progress,
     make_terminal,
 )

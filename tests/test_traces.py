@@ -17,7 +17,7 @@ from xagent.cli.runtime import (
     run_agent_turn,
     run_agent_turn_stream,
 )
-from xagent.agent.tools.workspace.files import read_file_tool
+from xagent.agent.tools.files import read_file_tool
 
 
 class _SuccessProvider:

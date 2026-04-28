@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from xagent.agent.policies import EditGuardrailsMiddleware
-from xagent.agent.tools.workspace.files import read_file_tool
+from xagent.agent.tools.files import read_file_tool
 from xagent.provider.types import ToolResultPart, ToolUsePart
 from xagent.agent.tools import ToolContext
 

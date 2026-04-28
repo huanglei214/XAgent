@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Awaitable, Callable, Optional, Type
+from typing import Any, Awaitable, Callable, Optional, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -54,6 +54,9 @@ class ToolResult(BaseModel):
         )
 
 
+ToolInputT = TypeVar("ToolInputT", bound=BaseModel)
+
+
 class Tool:
     """Wraps a named, typed handler into an OpenAI-compatible tool definition."""
 
@@ -61,8 +64,8 @@ class Tool:
         self,
         name: str,
         description: str,
-        input_model: Type[BaseModel],
-        handler: Callable[[BaseModel, ToolContext], Awaitable[ToolResult] | ToolResult],
+        input_model: type[ToolInputT],
+        handler: Callable[[ToolInputT, ToolContext], Awaitable[ToolResult] | ToolResult],
     ) -> None:
         self.name = name
         self.description = description

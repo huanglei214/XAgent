@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional, cast
 
 from anthropic import AsyncAnthropic
 
-from xagent.provider.types import Message, ModelConfig, ModelRequest, TextPart, ToolUsePart, message_text
+from xagent.provider.types import ContentPart, Message, ModelConfig, ModelRequest, TextPart, ToolUsePart, message_text
 
 
 class AnthropicProvider:
@@ -19,10 +19,10 @@ class AnthropicProvider:
                 "Set models[].api_key in .xagent/config.yaml before running XAgent."
             )
 
-        client_kwargs = {"api_key": api_key}
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
         if config.base_url:
             client_kwargs["base_url"] = config.base_url
-        self._client = AsyncAnthropic(**client_kwargs)
+        self._client = AsyncAnthropic(**cast(Any, client_kwargs))
 
     async def complete(self, request: ModelRequest) -> Message:
         response = await self._client.messages.create(**_to_anthropic_request_kwargs(request))
@@ -67,10 +67,10 @@ class AnthropicProvider:
                 continue
 
             if event_type == "content_block_stop" and index is not None:
-                block = blocks.get(index)
-                if block and block.get("type") == "tool_use" and "_partial_json" in block:
+                current_block = blocks.get(index)
+                if current_block and current_block.get("type") == "tool_use" and "_partial_json" in current_block:
                     try:
-                        block["input"] = json.loads(block["_partial_json"])
+                        current_block["input"] = json.loads(current_block["_partial_json"])
                     except json.JSONDecodeError:
                         pass
                 snapshot = _snapshot_from_blocks(blocks)
@@ -137,7 +137,7 @@ def _message_to_anthropic(message: Message) -> Optional[dict[str, Any]]:
             ],
         }
 
-    content = []
+    content: list[dict[str, Any]] = []
     for part in message.content:
         if part.type == "text":
             if part.text:
@@ -171,7 +171,7 @@ def _tools_to_anthropic(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _from_anthropic_message(message: Any) -> Message:
-    content = []
+    content: list[ContentPart] = []
     for block in getattr(message, "content", []) or []:
         converted = _content_part_from_anthropic(block)
         if converted is not None:
@@ -208,7 +208,7 @@ def _block_from_anthropic(block: Any) -> dict[str, Any]:
 
 
 def _snapshot_from_blocks(blocks: dict[int, dict[str, Any]]) -> Message:
-    content = []
+    content: list[ContentPart] = []
     for index in sorted(blocks):
         block = blocks[index]
         if block.get("type") == "text":

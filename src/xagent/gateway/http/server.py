@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from xagent.agent.runtime.serialization import serialize_message, to_jsonable
 from xagent.bus.messages import InboundMessage
+from xagent.provider.types import Message
 
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 TERMINAL_TOPICS = {"session.turn.completed", "session.turn.failed"}
@@ -159,7 +160,11 @@ def _outbound_to_event(message) -> dict:
     elif message.kind == "completed":
         completed_message = payload.get("message")
         if hasattr(completed_message, "model_dump"):
-            payload["message"] = serialize_message(completed_message)
+            payload["message"] = (
+                serialize_message(completed_message)
+                if isinstance(completed_message, Message)
+                else serialize_message(Message.model_validate(completed_message))
+            )
         else:
             payload.setdefault(
                 "message",

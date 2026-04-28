@@ -20,7 +20,7 @@ def serve_gateway(
     manager = build_managed_runtime_boundary(cwd, approval_prompt_fn=lambda _: "n")
     server = GatewayHTTPServer((host, port), manager)
     actual_host, actual_port = server.server_address[:2]
-    print_info(f"Gateway listening on http://{actual_host}:{actual_port}")
+    print_info(f"Gateway listening on http://{actual_host!s}:{actual_port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

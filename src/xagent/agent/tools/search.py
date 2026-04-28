@@ -5,9 +5,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from xagent.agent.tools.workspace.ignore import is_visible_path, iter_visible_entries
 from xagent.agent.paths import resolve_tool_path
 from xagent.agent.tools.base import Tool, ToolContext, ToolResult
+from xagent.agent.tools.ignore import is_visible_path, iter_visible_entries
 
 
 class ListFilesInput(BaseModel):

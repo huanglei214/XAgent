@@ -12,6 +12,7 @@ from typing import Any, Callable, Optional
 
 import typer
 
+from xagent.agent import Agent
 from xagent.agent.memory import create_runtime_memory
 from xagent.agent.policies import ApprovalMiddleware, ApprovalStore
 from xagent.agent.runtime import (
@@ -36,7 +37,7 @@ def build_runtime_agent(
     cwd: str,
     ask_user_question: Optional[Callable] = None,
     approval_prompt_fn: Optional[Callable[[str], Any]] = None,
-):
+) -> Agent:
     config = load_config()
     model_config = resolve_default_model(config)
     provider = create_provider(model_config)
@@ -80,7 +81,7 @@ def get_runtime_status(agent) -> str:
 
 
 def build_session_runtime(
-    agent,
+    agent: Agent,
     session_id: Optional[str] = None,
     *,
     cwd: Optional[str] = None,
@@ -88,7 +89,8 @@ def build_session_runtime(
     memory_bundle=None,
 ):
     message_bus = message_bus or MessageBus()
-    runtime_memory = memory_bundle or create_runtime_memory(cwd or getattr(agent, "cwd", "."), agent=agent)
+    runtime_cwd = cwd or str(agent.cwd)
+    runtime_memory = memory_bundle or create_runtime_memory(runtime_cwd, agent=agent)
     resolved_session_id = session_id or runtime_memory.episodic.new_session_id()
     runtime = SessionRuntime(
         session_id=resolved_session_id,
@@ -313,7 +315,7 @@ def build_runtime_stack(
     """
     message_bus = MessageBus()
     runtime_memory = memory_bundle or create_runtime_memory(
-        cwd or getattr(agent, "cwd", "."), agent=agent
+        cwd or str(agent.cwd), agent=agent
     )
     resolved_session_id = session_id or runtime_memory.episodic.new_session_id()
     runtime = SessionRuntime(

@@ -24,7 +24,6 @@ from xagent.agent.runtime.serialization import (
     serialize_job,
     serialize_job_history,
     serialize_message,
-    to_jsonable,
 )
 from xagent.bus.messages import InboundMessage, OutboundMessage
 from xagent.bus.queue import MessageBus
@@ -304,6 +303,7 @@ class SessionRuntimeManager:
         timeout_seconds: float = 30.0,
     ) -> OutboundMessage:
         self._start_loop()
+        assert self._loop is not None
         future = asyncio.run_coroutine_threadsafe(
             self._send_inbound_and_wait(message, timeout_seconds=timeout_seconds),
             self._loop,
@@ -336,6 +336,7 @@ class SessionRuntimeManager:
             task = asyncio.create_task(_pump(), name=f"managed-outbound-{stream_id[:8]}")
             self._managed_stream_tasks[stream_id] = task
 
+        assert self._loop is not None
         asyncio.run_coroutine_threadsafe(_start_stream(), self._loop).result(timeout=5.0)
 
         def _unsubscribe() -> None:
@@ -717,6 +718,8 @@ class SessionRuntimeManager:
         scheduler = self._persistent_scheduler
         if scheduler is not None and scheduler.get_job(job_id) is not None:
             result = await scheduler.wait_for_job(job_id)
+            if result is None:
+                raise RuntimeError(f"Scheduled job '{job_id}' finished without a result")
             return result
 
         session_id = self._job_sessions.get(job_id)
@@ -898,6 +901,8 @@ class SessionRuntimeManager:
         """Log all thread stacks to help diagnose runtime manager timeouts."""
         current_frames = sys._current_frames()
         for thread in threading.enumerate():
+            if thread.ident is None:
+                continue
             frame = current_frames.get(thread.ident)
             if frame is None:
                 continue

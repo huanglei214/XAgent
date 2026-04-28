@@ -1,3 +1,5 @@
+from typing import cast
+
 import typer
 
 from xagent.cli.config import (
@@ -12,6 +14,7 @@ from xagent.cli.config import (
 from xagent.cli.config import ModelConfig, default_config
 from xagent.cli.config import ensure_config_example_file
 from xagent.cli.tui.render import print_error, print_info
+from xagent.provider.types import ProviderName
 
 config_app = typer.Typer(help="Manage XAgent configuration.")
 model_app = typer.Typer(help="Manage configured models.")
@@ -94,7 +97,7 @@ def add_model_command(
 
     model = ModelConfig(
         name=name,
-        provider=provider,
+        provider=cast(ProviderName, provider),
         base_url=base_url or default_base_url(provider),
         api_key=api_key,
     )

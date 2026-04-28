@@ -83,11 +83,11 @@ class ModelRequest(BaseModel):
 class ModelProvider(Protocol):
     """Provider 统一协议：同步/流式/纯文本流三种调用形态。"""
 
-    async def stream_complete(self, request: ModelRequest) -> AsyncIterator[Message]:
+    def stream_complete(self, request: ModelRequest) -> AsyncIterator[Message]:
         ...
 
     async def complete(self, request: ModelRequest) -> Message:
         ...
 
-    async def stream_text(self, request: ModelRequest) -> AsyncIterator[str]:
+    def stream_text(self, request: ModelRequest) -> AsyncIterator[str]:
         ...

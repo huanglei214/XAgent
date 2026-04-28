@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import json
 from time import perf_counter
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from xagent.agent.core.middleware import AgentMiddleware
 from xagent.agent.core.runtime_events import emit_runtime_event
@@ -46,16 +46,23 @@ class Agent:
         self.max_repeated_tool_calls = max_repeated_tool_calls
         self.approval_handler = approval_handler
         self.messages: list[Message] = []
-        self.trace_recorder = None
-        self.last_error_stage = None
+        self.trace_recorder: Any | None = None
+        self.last_trace_recorder: Any | None = None
+        self.last_error_stage: Optional[str] = None
         self.last_termination_reason: Optional[str] = None
         self.requested_skill_name: Optional[str] = None
-        self.skills = []
-        self.runtime_event_sink = None
+        self.skills: list[Any] = []
+        self.runtime_event_sink: Optional[Callable[[str, dict[str, Any]], None]] = None
         self.allowed_external_paths: set[str] = set()
         self.request_path_access: Optional[Callable[[str, str], Awaitable[bool] | bool]] = None
+        self.provider_name: str = "unknown"
+        self.runtime_mode: str = "run"
+        self.trace_session_id: Optional[str] = None
+        self.approval_store: Any | None = None
+        self.todo_store: Any | None = None
+        self.project_rules: Optional[str] = None
         self._abort_event: Optional[asyncio.Event] = None
-        self._current_wait_task: Optional[asyncio.Task] = None
+        self._current_wait_task: Optional[asyncio.Future[Any]] = None
 
     def clear_messages(self) -> None:
         self.messages.clear()
@@ -166,7 +173,7 @@ class Agent:
                     self.last_termination_reason = "repeated_tool_call"
                     raise RuntimeError("Agent stopped: repeated tool loop detected.")
 
-            prepared = []
+            prepared: list[tuple[ToolUsePart, Awaitable[ToolResultPart] | None, ToolResultPart | None]] = []
             for tool_use in tool_uses:
                 if on_tool_use:
                     on_tool_use(tool_use)
@@ -212,9 +219,10 @@ class Agent:
                     )
                 )
 
-            invocation_results = await asyncio.gather(
-                *[task for _, task, immediate in prepared if task is not None and immediate is None]
-            )
+            pending_tasks: list[Awaitable[ToolResultPart]] = [
+                task for _, task, immediate in prepared if task is not None and immediate is None
+            ]
+            invocation_results = await asyncio.gather(*pending_tasks)
             invocation_iter = iter(invocation_results)
 
             for tool_use, task, immediate_result in prepared:
@@ -288,11 +296,11 @@ class Agent:
 
     async def _await_with_budget(
         self,
-        awaitable,
+        awaitable: Awaitable[Any],
         *,
         started_at: float,
         timeout_message: str,
-    ):
+    ) -> Any:
         remaining = self._remaining_duration(started_at)
         if remaining is None:
             return await self._await_with_abort(awaitable)
@@ -321,11 +329,11 @@ class Agent:
             return None
         return self.max_duration_seconds - (perf_counter() - started_at)
 
-    async def _await_with_abort(self, awaitable):
+    async def _await_with_abort(self, awaitable: Awaitable[Any]) -> Any:
         if self._abort_event is None:
             return await awaitable
 
-        task = asyncio.create_task(awaitable)
+        task: asyncio.Future[Any] = asyncio.ensure_future(awaitable)
         abort_task = asyncio.create_task(self._abort_event.wait())
         self._current_wait_task = task
         try:

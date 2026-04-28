@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from xagent.agent.tools.workspace import (
+from xagent.agent.tools import (
     apply_patch_tool,
     bash_tool,
     file_info_tool,

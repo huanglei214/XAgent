@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 from typer.testing import CliRunner
 
-from xagent.bus.messages import make_progress, make_terminal
+from xagent.bus.messages import make_progress
 from xagent.bus.queue import MessageBus
 from xagent.cli.main import app
 from xagent.cli.tui.commands import BUILTIN_COMMANDS, filter_commands, get_slash_query, insert_command
@@ -26,7 +26,7 @@ from xagent.cli.tui.tui import (
     build_transcript_text,
 )
 from xagent.agent.session import SessionSummary
-from xagent.agent.tools.workspace.interaction import AskUserQuestionInput
+from xagent.agent.tools.interaction import AskUserQuestionInput
 from xagent.provider.types import Message, TextPart, ToolResultPart, ToolUsePart
 
 

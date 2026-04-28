@@ -4,7 +4,6 @@ import unittest
 
 from xagent.agent.runtime.session_runtime import (
     PostTurnContext,
-    PostTurnHook,
     SessionRuntime,
 )
 from xagent.bus.messages import InboundMessage

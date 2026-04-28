@@ -1,5 +1,4 @@
 import unittest
-from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from xagent.agent.compaction import AutoCompactService
@@ -26,7 +25,6 @@ class _MemoryAgent:
 class AutoCompactServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_auto_compact_compacts_and_emits_events(self) -> None:
         with TemporaryDirectory() as tmp:
-            root = Path(tmp)
             agent = _MemoryAgent()
             memory = create_runtime_memory(tmp, agent=agent)
             memory.episodic.store.checkpoint_threshold = 3

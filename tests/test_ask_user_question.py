@@ -1,6 +1,6 @@
 import unittest
 
-from xagent.agent.tools.workspace.interaction import (
+from xagent.agent.tools.interaction import (
     AskUserQuestionInput,
     AskUserQuestionResultData,
     create_ask_user_question_tool,

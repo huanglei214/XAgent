@@ -4,7 +4,7 @@ from typing import Callable, Optional
 from xagent.agent import Agent, SkillsMiddleware, create_todo_system, discover_skills
 from xagent.agent.core.middleware import AgentMiddleware
 from xagent.agent.policies import EditGuardrailsMiddleware, ProjectRulesMiddleware, load_project_rules
-from xagent.agent.tools.workspace import ALL_WORKSPACE_TOOLS, create_ask_user_question_tool
+from xagent.agent.tools import ALL_WORKSPACE_TOOLS, create_ask_user_question_tool
 from xagent.provider.types import Message, TextPart
 
 
