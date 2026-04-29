@@ -1,1 +1,1 @@
-"""CLI package for the `agent` command."""
+"""CLI package for the `xagent` command."""

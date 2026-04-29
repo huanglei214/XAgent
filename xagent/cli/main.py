@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import argparse
 import asyncio
 import sys
-from typing import Sequence
+from dataclasses import dataclass
+from typing import Annotated, Sequence
+
+import click
+import typer
+from typer.main import get_command
 
 from xagent.bus import InboundMessage, MessageBus, OutboundEvent
 from xagent.cli.factory import build_agent, create_session, resolve_workspace
@@ -11,28 +15,78 @@ from xagent.config import ensure_config
 from xagent.providers import ModelEvent
 
 
+app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+    rich_markup_mode=None,
+    pretty_exceptions_enable=False,
+)
+
+
+@dataclass(frozen=True)
+class AgentCliArgs:
+    message: str | None = None
+    resume: str | None = None
+    workspace: str | None = None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] == "gateway":
-        print("agent gateway is reserved for future external channels.")
+    args = list(sys.argv[1:] if argv is None else argv)
+    command = get_command(app)
+    if not args:
+        with click.Context(command, info_name="xagent") as context:
+            click.echo(command.get_help(context))
         return 0
-    args = build_parser().parse_args(argv)
-    return asyncio.run(_main_async(args))
+    try:
+        result = command.main(
+            args=args,
+            prog_name="xagent",
+            standalone_mode=False,
+        )
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.ClickException as exc:
+        exc.show()
+        return exc.exit_code
+    except click.Abort:
+        click.echo("Aborted!", err=True)
+        return 1
+    return result if isinstance(result, int) else 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agent")
-    parser.add_argument("-m", "--message", help="Run a one-shot message.")
-    parser.add_argument("-r", "--resume", help="Resume a session by directory name.")
-    parser.add_argument(
-        "-w",
-        "--workspace",
-        help="Workspace path. Defaults to ~/.xagent/workspace/files.",
+@app.command("agent")
+def agent_command(
+    message: Annotated[
+        str | None,
+        typer.Option("-m", "--message", help="Run a one-shot message."),
+    ] = None,
+    resume: Annotated[
+        str | None,
+        typer.Option("-r", "--resume", help="Resume a session by directory name."),
+    ] = None,
+    workspace: Annotated[
+        str | None,
+        typer.Option(
+            "-w",
+            "--workspace",
+            help="Workspace path. Defaults to ~/.xagent/workspace/files.",
+        ),
+    ] = None,
+) -> None:
+    raise typer.Exit(
+        asyncio.run(
+            _main_async(AgentCliArgs(message=message, resume=resume, workspace=workspace))
+        )
     )
-    return parser
 
 
-async def _main_async(args: argparse.Namespace) -> int:
+@app.command("gateway")
+def gateway_command() -> None:
+    typer.echo("xagent gateway is reserved for future external channels.")
+
+
+async def _main_async(args: AgentCliArgs) -> int:
     config = ensure_config(interactive=True)
     workspace_path = resolve_workspace(config, args.workspace)
     workspace_path.mkdir(parents=True, exist_ok=True)

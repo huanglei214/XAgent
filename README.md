@@ -28,17 +28,18 @@ usage, and timings for debugging.
 ## CLI
 
 ```bash
-agent
-agent -m "explain this workspace"
-agent -r terminal-20260429-abcdef
-agent -w /path/to/project
-agent gateway
+xagent agent
+xagent agent -m "explain this workspace"
+xagent agent -r terminal-20260429-abcdef
+xagent agent -w /path/to/project
+xagent gateway
 ```
 
-`agent` starts a new terminal chat session. `agent -m/--message` runs one message directly
-against the Agent while still writing a session package and trace. `agent
-gateway` is reserved for future external chat channels. `-r/--resume` resumes a
-session by directory name, and `-w/--workspace` chooses the workspace path.
+`xagent` without a subcommand shows help. `xagent agent` starts a new terminal
+chat session. `xagent agent -m/--message` runs one message directly against the
+Agent while still writing a session package and trace. `xagent gateway` is
+reserved for future external chat channels. `-r/--resume` resumes a session by
+directory name, and `-w/--workspace` chooses the workspace path.
 
 ## Provider Config
 
