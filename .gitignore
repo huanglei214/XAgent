@@ -1,0 +1,10 @@
+.xagent/
+.xagent_v1
+.pycache/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.DS_Store
