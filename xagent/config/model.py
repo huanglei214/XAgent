@@ -64,7 +64,8 @@ class PermissionConfig:
 
 @dataclass
 class TraceConfig:
-    raw_model_io: bool = True
+    raw_model_io: bool = False
+    model_events: bool = False
     context_threshold_ratio: float = 0.70
 
 

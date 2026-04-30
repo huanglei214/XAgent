@@ -10,6 +10,9 @@ from xagent.providers import make_provider
 from xagent.session import Session, SessionStore
 
 
+DEFAULT_CLI_SESSION_ID = "cli:default"
+
+
 def resolve_workspace(config: AppConfig, workspace: str | None) -> Path:
     if workspace:
         return Path(workspace).expanduser().resolve()
@@ -23,9 +26,8 @@ def create_session(
     resume: str | None = None,
 ) -> Session:
     store = SessionStore(config.sessions_path)
-    if resume:
-        return store.open(resume)
-    return store.create(workspace_path=workspace_path, source="terminal")
+    session_id = resume or DEFAULT_CLI_SESSION_ID
+    return store.open_or_create(session_id, workspace_path=workspace_path)
 
 
 def build_agent(
@@ -48,4 +50,5 @@ def build_agent(
         max_duration_seconds=config.limits.max_duration_seconds,
         max_repeated_tool_calls=config.limits.max_repeated_tool_calls,
         context_char_threshold=config.limits.context_char_threshold,
+        trace_model_events=config.trace.model_events,
     )

@@ -31,6 +31,7 @@ class Agent:
     max_duration_seconds: float = 600.0
     max_repeated_tool_calls: int = 3
     context_char_threshold: int = 120_000
+    trace_model_events: bool = False
 
     async def run(self, user_text: str, *, on_event: EventSink | None = None) -> dict[str, Any]:
         self.session.append_message({"role": "user", "content": user_text})
@@ -105,21 +106,24 @@ class Agent:
         final_message: dict[str, Any] | None = None
         try:
             async for event in self.provider.stream(request):
-                self.session.append_trace(
-                    "model_event",
-                    {
-                        "kind": event.kind,
-                        "text": event.text,
-                        "tool_call": event.tool_call,
-                        "message": event.message,
-                        "usage": event.usage,
-                        "raw": event.raw,
-                    },
-                )
+                if self.trace_model_events:
+                    self.session.append_trace(
+                        "model_event",
+                        {
+                            "kind": event.kind,
+                            "text": event.text,
+                            "tool_call": event.tool_call,
+                            "message": event.message,
+                            "usage": event.usage,
+                            "raw": event.raw,
+                        },
+                    )
                 if event.kind in {"text_delta", "tool_call_delta"}:
                     builder.apply(event)
                 if event.kind == "message_done":
                     final_message = event.message or builder.final_message()
+                if event.kind == "usage":
+                    self.session.append_trace("model_usage", {"usage": event.usage})
                 if on_event is not None:
                     maybe = on_event(event)
                     if inspect.isawaitable(maybe):

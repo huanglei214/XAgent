@@ -22,24 +22,27 @@ codebase remains preserved on the `main-v1` branch.
 ```
 
 `messages.jsonl` stores OpenAI-compatible model-visible conversation records.
-`trace.jsonl` stores raw provider stream events, tool inputs/outputs, errors,
-usage, and timings for debugging.
+`trace.jsonl` stores model requests/finals, usage, tool inputs/outputs, errors,
+and timings for debugging. Per-chunk provider stream events are disabled by
+default; set `trace.model_events: true` to record `model_event` entries.
 
 ## CLI
 
 ```bash
 xagent agent
 xagent agent -m "explain this workspace"
-xagent agent -r terminal-20260429-abcdef
+xagent agent -r cli:experiment
 xagent agent -w /path/to/project
 xagent gateway
 ```
 
 `xagent` without a subcommand shows help. `xagent agent` starts a new terminal
-chat session. `xagent agent -m/--message` runs one message directly against the
-Agent while still writing a session package and trace. `xagent gateway` is
-reserved for future external chat channels. `-r/--resume` resumes a session by
-directory name, and `-w/--workspace` chooses the workspace path.
+chat session using the default `cli:default` session. `xagent agent
+-m/--message` runs one message directly against the Agent while still writing a
+session package and trace. `xagent gateway` is reserved for future external chat
+channels. `-r/--resume` resumes a session by directory name and creates it if it
+does not exist. `-w/--workspace` chooses the workspace path for newly created
+sessions.
 
 ## Provider Config
 

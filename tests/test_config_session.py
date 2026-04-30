@@ -21,9 +21,13 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert config.agents.defaults.model == "gpt-4o-mini"
     assert config.agents.defaults.provider == "openai_compat"
     assert config.providers.openai_compat.api_key_env == "OPENAI_API_KEY"
+    assert config.trace.raw_model_io is False
+    assert config.trace.model_events is False
     config_text = (tmp_path / "home" / "config.yaml").read_text(encoding="utf-8")
     assert "agents:" in config_text
     assert "providers:" in config_text
+    assert "raw_model_io: false" in config_text
+    assert "model_events: false" in config_text
 
 
 def test_session_package_writes_meta_messages_trace_and_artifacts(tmp_path) -> None:
@@ -44,6 +48,22 @@ def test_session_package_writes_meta_messages_trace_and_artifacts(tmp_path) -> N
     trace = [json.loads(line) for line in session.trace_path.read_text().splitlines()]
     assert trace[1]["type"] == "example"
     assert trace[1]["ok"] is True
+
+
+def test_session_open_or_create_reuses_fixed_session_id(tmp_path) -> None:
+    sessions = SessionStore(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    first = sessions.open_or_create("cli:default", workspace_path=workspace)
+    first.append_message({"role": "user", "content": "hello"})
+    second = sessions.open_or_create("cli:default", workspace_path=tmp_path / "other")
+
+    assert first.session_id == "cli:default"
+    assert second.session_id == "cli:default"
+    assert second.path == first.path
+    assert second.workspace_path == workspace.resolve()
+    assert second.read_records()[1]["message"] == {"role": "user", "content": "hello"}
 
 
 def test_session_summary_becomes_model_visible_system_message(tmp_path) -> None:

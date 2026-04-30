@@ -97,6 +97,20 @@ async def test_agent_records_plain_text_response(tmp_path) -> None:
     records = agent.session.read_records()
     assert records[1]["message"] == {"role": "user", "content": "hi"}
     assert records[2]["message"] == {"role": "assistant", "content": "hello"}
+    trace_text = agent.session.trace_path.read_text(encoding="utf-8")
+    assert "model_request" in trace_text
+    assert "model_final" in trace_text
+    assert "model_event" not in trace_text
+
+
+@pytest.mark.asyncio
+async def test_agent_can_trace_model_stream_events_when_enabled(tmp_path) -> None:
+    provider = ScriptedProvider([text_response("hello")])
+    agent = make_agent(tmp_path, provider)
+    agent.trace_model_events = True
+
+    await agent.run("hi")
+
     assert "model_event" in agent.session.trace_path.read_text(encoding="utf-8")
 
 

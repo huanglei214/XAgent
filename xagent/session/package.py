@@ -14,7 +14,7 @@ def utc_now() -> str:
 
 
 def sanitize_id(value: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
+    cleaned = re.sub(r"[^A-Za-z0-9_.:-]+", "-", value).strip("-:")
     return cleaned or uuid4().hex[:8]
 
 
@@ -115,6 +115,20 @@ class SessionStore:
         session_id = new_session_id(source=source, external_id=external_id)
         return self._initialize(session_id=session_id, workspace_path=workspace_path)
 
+    def open_or_create(self, session_id: str, *, workspace_path: Path) -> Session:
+        safe_session_id = sanitize_id(session_id)
+        path = self.sessions_path / safe_session_id
+        messages_path = path / "messages.jsonl"
+        if messages_path.exists():
+            return self.open(safe_session_id)
+        if path.exists():
+            raise ValueError(f"Session directory {path} exists but has no messages.jsonl")
+        return self._initialize(
+            session_id=safe_session_id,
+            workspace_path=workspace_path,
+            ensure_unique=False,
+        )
+
     def open(self, session_id: str) -> Session:
         path = self.sessions_path / sanitize_id(session_id)
         messages_path = path / "messages.jsonl"
@@ -124,13 +138,21 @@ class SessionStore:
         workspace_path = Path(meta.get("workspace_path") or ".").expanduser().resolve()
         return Session(session_id=path.name, path=path, workspace_path=workspace_path)
 
-    def _initialize(self, *, session_id: str, workspace_path: Path) -> Session:
+    def _initialize(
+        self,
+        *,
+        session_id: str,
+        workspace_path: Path,
+        ensure_unique: bool = True,
+    ) -> Session:
         path = self.sessions_path / sanitize_id(session_id)
         suffix = 1
         original = path
-        while path.exists():
+        while ensure_unique and path.exists():
             suffix += 1
             path = original.with_name(f"{original.name}-{suffix}")
+        if path.exists():
+            raise FileExistsError(path)
         path.mkdir(parents=True)
         (path / "artifacts").mkdir()
         session = Session(session_id=path.name, path=path, workspace_path=workspace_path.resolve())

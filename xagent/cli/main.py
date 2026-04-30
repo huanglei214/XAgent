@@ -9,6 +9,7 @@ import click
 import typer
 from typer.main import get_command
 
+from xagent.agent import Agent
 from xagent.bus import InboundMessage, MessageBus, OutboundEvent
 from xagent.cli.factory import build_agent, create_session, resolve_workspace
 from xagent.config import ensure_config
@@ -74,11 +75,13 @@ def agent_command(
         ),
     ] = None,
 ) -> None:
-    raise typer.Exit(
-        asyncio.run(
-            _main_async(AgentCliArgs(message=message, resume=resume, workspace=workspace))
-        )
-    )
+    args = AgentCliArgs(message=message, resume=resume, workspace=workspace)
+    try:
+        exit_code = _main(args)
+    except KeyboardInterrupt:
+        typer.echo("\nbyebye!")
+        raise typer.Exit(0) from None
+    raise typer.Exit(exit_code)
 
 
 @app.command("gateway")
@@ -86,7 +89,7 @@ def gateway_command() -> None:
     typer.echo("xagent gateway is reserved for future external channels.")
 
 
-async def _main_async(args: AgentCliArgs) -> int:
+def _main(args: AgentCliArgs) -> int:
     config = ensure_config(interactive=True)
     workspace_path = resolve_workspace(config, args.workspace)
     workspace_path.mkdir(parents=True, exist_ok=True)
@@ -95,33 +98,55 @@ async def _main_async(args: AgentCliArgs) -> int:
     print(f"Session: {session.session_id}")
     print(f"Workspace: {session.workspace_path}")
     if args.message is not None:
-        final = await agent.run(args.message, on_event=_print_event)
-        if final.get("content"):
-            print()
-        return 0
-    await _chat(agent, session.session_id)
+        return asyncio.run(_run_once(agent, args.message))
+    return _chat(agent, session.session_id)
+
+
+async def _run_once(agent: Agent, message: str) -> int:
+    final = await agent.run(message, on_event=_print_event)
+    if final.get("content"):
+        print()
     return 0
 
 
-async def _chat(agent, session_id: str) -> None:
+def _chat(agent: Agent, session_id: str) -> int:
     bus = MessageBus()
+    loop = asyncio.new_event_loop()
     print("Type 'exit' or 'quit' to leave.")
-    while True:
-        try:
-            text = input("> ")
-        except EOFError:
-            print()
-            return
-        if text.strip().lower() in {"exit", "quit"}:
-            return
-        if not text.strip():
-            continue
-        inbound = InboundMessage(content=text, session_id=session_id)
-        await bus.publish_inbound(inbound)
-        await _dispatch_chat_once(agent, bus)
+    try:
+        asyncio.set_event_loop(loop)
+        while True:
+            try:
+                text = input("> ")
+            except EOFError:
+                print()
+                return 0
+            if text.strip().lower() in {"exit", "quit"}:
+                return 0
+            if not text.strip():
+                continue
+            inbound = InboundMessage(content=text, session_id=session_id)
+            loop.run_until_complete(bus.publish_inbound(inbound))
+            loop.run_until_complete(_dispatch_chat_once(agent, bus))
+            loop.run_until_complete(_render_outbound_once(bus, inbound.id))
+    finally:
+        _shutdown_loop(loop)
 
 
-async def _dispatch_chat_once(agent, bus: MessageBus) -> None:
+def _shutdown_loop(loop: asyncio.AbstractEventLoop) -> None:
+    if loop.is_closed():
+        return
+    pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+    for task in pending:
+        task.cancel()
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    loop.run_until_complete(loop.shutdown_asyncgens())
+    asyncio.set_event_loop(None)
+    loop.close()
+
+
+async def _dispatch_chat_once(agent: Agent, bus: MessageBus) -> None:
     inbound = await bus.consume_inbound()
 
     async def publish_event(event: ModelEvent) -> None:
@@ -129,7 +154,6 @@ async def _dispatch_chat_once(agent, bus: MessageBus) -> None:
             await bus.publish_outbound(
                 OutboundEvent(kind="delta", content=event.text, inbound_id=inbound.id)
             )
-            print(event.text, end="", flush=True)
 
     try:
         final = await agent.run(inbound.content, on_event=publish_event)
@@ -141,10 +165,24 @@ async def _dispatch_chat_once(agent, bus: MessageBus) -> None:
                 inbound_id=inbound.id,
             )
         )
-        print()
     except Exception as exc:  # noqa: BLE001 - CLI should show failures plainly
         await bus.publish_outbound(OutboundEvent(kind="error", content=str(exc), inbound_id=inbound.id))
-        print(f"\nError: {exc}", file=sys.stderr)
+
+
+async def _render_outbound_once(bus: MessageBus, inbound_id: str) -> None:
+    while True:
+        event = await bus.consume_outbound()
+        if event.inbound_id != inbound_id:
+            continue
+        if event.kind == "delta":
+            print(event.content, end="", flush=True)
+            continue
+        if event.kind == "final":
+            print()
+            return
+        if event.kind == "error":
+            print(f"\nError: {event.content}", file=sys.stderr)
+            return
 
 
 def _print_event(event: ModelEvent) -> None:
