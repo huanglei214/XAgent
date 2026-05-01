@@ -108,3 +108,7 @@ class AgentRuntime:
                     metadata={"error": True},
                 )
             )
+
+    async def run(self, bus: MessageBus) -> None:
+        while True:
+            await self.dispatch_once(bus)

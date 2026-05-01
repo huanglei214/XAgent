@@ -7,7 +7,6 @@ from dataclasses import dataclass
 class ProviderSpec:
     name: str
     backend: str
-    env_key: str
     display_name: str = ""
 
     @property
@@ -18,7 +17,6 @@ class ProviderSpec:
 OPENAI_COMPAT_SPEC = ProviderSpec(
     name="openai_compat",
     backend="openai_compat",
-    env_key="OPENAI_API_KEY",
     display_name="OpenAI Compatible",
 )
 

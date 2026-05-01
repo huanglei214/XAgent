@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any, AsyncIterator, cast
 
 from xagent.providers.registry import ProviderSpec
@@ -15,7 +14,6 @@ class OpenAICompatProvider:
         self,
         *,
         api_key: str | None = None,
-        api_key_env: str = "OPENAI_API_KEY",
         api_base: str | None = None,
         extra_headers: dict[str, str] | None = None,
         extra_body: dict[str, Any] | None = None,
@@ -23,7 +21,6 @@ class OpenAICompatProvider:
         spec: ProviderSpec | None = None,
     ) -> None:
         self.api_key = api_key
-        self.api_key_env = api_key_env
         self.api_base = api_base
         self.extra_headers = extra_headers or {}
         self.extra_body = extra_body or {}
@@ -73,4 +70,4 @@ class OpenAICompatProvider:
         return kwargs
 
     def _resolved_api_key(self) -> str:
-        return self.api_key or os.environ.get(self.api_key_env) or "no-key"
+        return self.api_key or "no-key"

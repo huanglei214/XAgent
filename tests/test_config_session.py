@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from xagent.config import ensure_config, xagent_home
+import pytest
+
+from xagent.config import LarkChannelConfig, ensure_config, load_config, xagent_home
 from xagent.session import SessionStore, resolve_session_id, session_id_from_chat
 
 
@@ -17,17 +19,98 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert config.sessions_path == tmp_path / "home" / "workspace" / "sessions"
     assert config.default_workspace_path.is_dir()
     assert config.sessions_path.is_dir()
-    assert config.channels == {}
+    assert config.channels.lark.enabled is False
+    assert config.channels.lark.app_id is None
+    assert config.channels.lark.app_secret is None
     assert config.agents.defaults.model == "gpt-4o-mini"
     assert config.agents.defaults.provider == "openai_compat"
-    assert config.providers.openai_compat.api_key_env == "OPENAI_API_KEY"
+    assert config.providers.openai_compat.api_key is None
     assert config.trace.raw_model_io is False
     assert config.trace.model_events is False
     config_text = (tmp_path / "home" / "config.yaml").read_text(encoding="utf-8")
     assert "agents:" in config_text
     assert "providers:" in config_text
+    assert "channels:" in config_text
+    assert "lark:" in config_text
     assert "raw_model_io: false" in config_text
     assert "model_events: false" in config_text
+
+
+def test_lark_channel_config_loads_explicit_values(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+channels:
+  lark:
+    enabled: true
+    app_id: cli_explicit
+    app_secret: secret_explicit
+    verification_token: vt
+    encrypt_key: ek
+    domain: lark
+    require_mention: false
+    strip_mention: false
+    auto_reconnect: false
+    log_level: debug
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.channels.lark == LarkChannelConfig(
+        enabled=True,
+        app_id="cli_explicit",
+        app_secret="secret_explicit",
+        verification_token="vt",
+        encrypt_key="ek",
+        domain="lark",
+        require_mention=False,
+        strip_mention=False,
+        auto_reconnect=False,
+        log_level="debug",
+    )
+
+
+def test_lark_channel_config_rejects_unknown_domain() -> None:
+    with pytest.raises(ValueError, match="channels.lark.domain"):
+        LarkChannelConfig(domain="unknown")
+
+
+def test_lark_channel_config_ignores_removed_env_fields(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+channels:
+  lark:
+    app_id_env: OLD_LARK_APP_ID
+    app_secret_env: OLD_LARK_APP_SECRET
+    verification_token_env: OLD_LARK_VERIFICATION_TOKEN
+    encrypt_key_env: OLD_LARK_ENCRYPT_KEY
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.channels.lark.app_id is None
+    assert config.channels.lark.app_secret is None
+
+
+def test_provider_config_ignores_removed_env_field(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+providers:
+  openai_compat:
+    api_key_env: OLD_OPENAI_API_KEY
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.providers.openai_compat.api_key is None
 
 
 def test_session_package_writes_meta_messages_trace_and_artifacts(tmp_path) -> None:

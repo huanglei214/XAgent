@@ -11,10 +11,59 @@ from xagent.config import default_config
 from xagent.session import SessionStore
 
 
-def test_gateway_placeholder(capsys) -> None:
+def test_gateway_without_enabled_channels_returns_hint(monkeypatch, tmp_path, capsys) -> None:
+    config = default_config()
+    config.workspace.default_path = str(tmp_path / "workspace")
+    config.workspace.sessions_path = str(tmp_path / "sessions")
+    monkeypatch.setattr(cli_main, "ensure_config", lambda *, interactive: config)
+
+    assert cli_main.main(["gateway"]) == 1
+    captured = capsys.readouterr()
+    assert "No channels enabled" in captured.out
+
+
+def test_gateway_builds_channel_manager_and_runtime(monkeypatch, tmp_path, capsys) -> None:
+    config = default_config()
+    config.workspace.default_path = str(tmp_path / "workspace")
+    config.workspace.sessions_path = str(tmp_path / "sessions")
+    bus_seen: MessageBus | None = None
+    channels_seen = None
+    runtime_seen = None
+    manager_seen = None
+    fake_channels = {"lark": object()}
+
+    class FakeRuntime:
+        def __init__(self, *, config, workspace_path) -> None:
+            self.config = config
+            self.workspace_path = workspace_path
+
+    class FakeManager:
+        def __init__(self, *, bus, channels) -> None:
+            nonlocal bus_seen, channels_seen
+            bus_seen = bus
+            channels_seen = channels
+
+    async def fake_run_gateway(*, runtime, manager, bus) -> int:
+        nonlocal runtime_seen, manager_seen
+        runtime_seen = runtime
+        manager_seen = manager
+        assert bus is bus_seen
+        return 0
+
+    monkeypatch.setattr(cli_main, "ensure_config", lambda *, interactive: config)
+    monkeypatch.setattr(cli_main, "build_channels", lambda config, bus: fake_channels)
+    monkeypatch.setattr(cli_main, "AgentRuntime", FakeRuntime)
+    monkeypatch.setattr(cli_main, "ChannelManager", FakeManager)
+    monkeypatch.setattr(cli_main, "_run_gateway", fake_run_gateway)
+
     assert cli_main.main(["gateway"]) == 0
     captured = capsys.readouterr()
-    assert "reserved for future external channels" in captured.out
+
+    assert "xagent gateway started." in captured.out
+    assert isinstance(bus_seen, MessageBus)
+    assert channels_seen is fake_channels
+    assert isinstance(runtime_seen, FakeRuntime)
+    assert isinstance(manager_seen, FakeManager)
 
 
 def test_root_without_args_shows_help(capsys) -> None:

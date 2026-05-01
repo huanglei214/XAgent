@@ -11,6 +11,7 @@ from typer.main import get_command
 
 from xagent.agent import Agent, AgentRuntime
 from xagent.bus import InboundMessage, MessageBus, StreamKind
+from xagent.channels import ChannelManager, build_channels
 from xagent.cli.factory import (
     DEFAULT_CLI_CHANNEL,
     DEFAULT_CLI_CHAT_ID,
@@ -97,7 +98,12 @@ def agent_command(
 
 @app.command("gateway")
 def gateway_command() -> None:
-    typer.echo("xagent gateway is reserved for future external channels.")
+    try:
+        exit_code = _gateway()
+    except KeyboardInterrupt:
+        typer.echo("\nbyebye!")
+        raise typer.Exit(0) from None
+    raise typer.Exit(exit_code)
 
 
 def _main(args: AgentCliArgs) -> int:
@@ -118,6 +124,45 @@ def _main(args: AgentCliArgs) -> int:
         chat_id=DEFAULT_CLI_CHAT_ID,
         sender_id=DEFAULT_CLI_SENDER_ID,
     )
+
+
+def _gateway() -> int:
+    config = ensure_config(interactive=True)
+    workspace_path = resolve_workspace(config, None)
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    bus = MessageBus()
+    channels = build_channels(config, bus)
+    if not channels:
+        typer.echo(
+            "No channels enabled. Enable channels.lark.enabled in ~/.xagent/config.yaml."
+        )
+        return 1
+    runtime = AgentRuntime(config=config, workspace_path=workspace_path)
+    manager = ChannelManager(bus=bus, channels=channels)
+    typer.echo("xagent gateway started.")
+    return asyncio.run(_run_gateway(runtime=runtime, manager=manager, bus=bus))
+
+
+async def _run_gateway(
+    *,
+    runtime: AgentRuntime,
+    manager: ChannelManager,
+    bus: MessageBus,
+) -> int:
+    tasks = [
+        asyncio.create_task(manager.run()),
+        asyncio.create_task(runtime.run(bus)),
+    ]
+    try:
+        done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        for task in done:
+            task.result()
+        return 0
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _run_once(agent: Agent, message: str) -> int:

@@ -10,11 +10,10 @@ from xagent.providers import OpenAICompatProvider, make_provider
 from xagent.providers.types import ModelRequest
 
 
-def test_make_provider_resolves_openai_compat_snapshot_from_env(monkeypatch) -> None:
-    monkeypatch.setenv("XAGENT_TEST_API_KEY", "env-key")
+def test_make_provider_resolves_openai_compat_snapshot_from_config() -> None:
     config = default_config()
     config.agents.defaults.model = "custom-model"
-    config.providers.openai_compat.api_key_env = "XAGENT_TEST_API_KEY"
+    config.providers.openai_compat.api_key = "config-key"
     config.providers.openai_compat.api_base = "http://localhost:11434/v1"
 
     snapshot = make_provider(config)
@@ -23,8 +22,8 @@ def test_make_provider_resolves_openai_compat_snapshot_from_env(monkeypatch) -> 
     assert snapshot.provider_name == "openai_compat"
     assert snapshot.api_base == "http://localhost:11434/v1"
     assert isinstance(snapshot.provider, OpenAICompatProvider)
-    assert snapshot.provider._resolved_api_key() == "env-key"
-    assert "env-key" not in snapshot.signature
+    assert snapshot.provider._resolved_api_key() == "config-key"
+    assert "config-key" not in snapshot.signature
 
 
 def test_make_provider_rejects_unknown_provider() -> None:
@@ -35,15 +34,14 @@ def test_make_provider_rejects_unknown_provider() -> None:
         make_provider(config)
 
 
-def test_explicit_api_key_overrides_environment(monkeypatch) -> None:
+def test_missing_api_key_uses_no_key_and_ignores_environment(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "env-key")
     config = default_config()
-    config.providers.openai_compat.api_key = "explicit-key"
 
     snapshot = make_provider(config)
 
     assert isinstance(snapshot.provider, OpenAICompatProvider)
-    assert snapshot.provider._resolved_api_key() == "explicit-key"
+    assert snapshot.provider._resolved_api_key() == "no-key"
 
 
 def test_openai_compat_build_kwargs_merges_provider_options() -> None:
@@ -120,7 +118,6 @@ async def test_openai_compat_stream_emits_core_events(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
     provider = OpenAICompatProvider(
         api_key=None,
-        api_key_env="XAGENT_MISSING_KEY",
         api_base="http://localhost:11434/v1",
         extra_body={"keep": True},
     )

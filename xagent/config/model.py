@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -33,7 +34,6 @@ class AgentsConfig:
 @dataclass
 class OpenAICompatProviderConfig:
     api_key: str | None = None
-    api_key_env: str = "OPENAI_API_KEY"
     api_base: str | None = None
     extra_headers: dict[str, str] = field(default_factory=dict)
     extra_body: dict[str, Any] = field(default_factory=dict)
@@ -83,6 +83,29 @@ class AgentLimitsConfig:
 
 
 @dataclass
+class LarkChannelConfig:
+    enabled: bool = False
+    app_id: str | None = None
+    app_secret: str | None = None
+    verification_token: str | None = None
+    encrypt_key: str | None = None
+    domain: str = "feishu"
+    require_mention: bool = True
+    strip_mention: bool = True
+    auto_reconnect: bool = True
+    log_level: str = "info"
+
+    def __post_init__(self) -> None:
+        if self.domain not in {"feishu", "lark"}:
+            raise ValueError("channels.lark.domain must be 'feishu' or 'lark'")
+
+
+@dataclass
+class ChannelsConfig:
+    lark: LarkChannelConfig = field(default_factory=LarkChannelConfig)
+
+
+@dataclass
 class AppConfig:
     agents: AgentsConfig = field(default_factory=AgentsConfig)
     providers: ProvidersConfig = field(default_factory=ProvidersConfig)
@@ -91,7 +114,7 @@ class AppConfig:
     trace: TraceConfig = field(default_factory=TraceConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     limits: AgentLimitsConfig = field(default_factory=AgentLimitsConfig)
-    channels: dict[str, Any] = field(default_factory=dict)
+    channels: ChannelsConfig = field(default_factory=ChannelsConfig)
 
     @property
     def default_workspace_path(self) -> Path:
@@ -163,9 +186,9 @@ def _interactive_fill(config: AppConfig) -> None:
     if model_name:
         config.agents.defaults.model = model_name
     provider = config.providers.openai_compat
-    api_key_env = input(f"API key environment variable [{provider.api_key_env}]: ").strip()
-    if api_key_env:
-        provider.api_key_env = api_key_env
+    api_key = getpass.getpass("OpenAI-compatible API key [empty/no-key]: ").strip()
+    if api_key:
+        provider.api_key = api_key
     base_url = input("OpenAI-compatible base URL [default]: ").strip()
     if base_url:
         provider.api_base = base_url
@@ -181,6 +204,26 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         if isinstance(providers_payload, dict)
         else {}
     )
+    if not isinstance(openai_payload, dict):
+        openai_payload = {}
+    openai_defaults = asdict(default.providers.openai_compat)
+    openai_values = {
+        **openai_defaults,
+        **{key: value for key, value in openai_payload.items() if key in openai_defaults},
+    }
+    channels_payload = payload.get("channels", {})
+    lark_payload = (
+        channels_payload.get("lark", {})
+        if isinstance(channels_payload, dict)
+        else {}
+    )
+    if not isinstance(lark_payload, dict):
+        lark_payload = {}
+    lark_defaults = asdict(default.channels.lark)
+    lark_values = {
+        **lark_defaults,
+        **{key: value for key, value in lark_payload.items() if key in lark_defaults},
+    }
     return AppConfig(
         agents=AgentsConfig(
             defaults=AgentDefaultsConfig(
@@ -189,7 +232,7 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         ),
         providers=ProvidersConfig(
             openai_compat=OpenAICompatProviderConfig(
-                **{**asdict(default.providers.openai_compat), **openai_payload}
+                **openai_values
             )
         ),
         workspace=WorkspaceConfig(
@@ -201,5 +244,7 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         trace=TraceConfig(**{**asdict(default.trace), **payload.get("trace", {})}),
         tools=ToolsConfig(**{**asdict(default.tools), **payload.get("tools", {})}),
         limits=AgentLimitsConfig(**{**asdict(default.limits), **payload.get("limits", {})}),
-        channels=dict(payload.get("channels") or {}),
+        channels=ChannelsConfig(
+            lark=LarkChannelConfig(**lark_values)
+        ),
     )

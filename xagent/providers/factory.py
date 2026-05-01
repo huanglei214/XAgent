@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,7 +30,6 @@ def make_provider(config: AppConfig) -> ProviderSnapshot:
     provider_config = config.providers.openai_compat
     provider = OpenAICompatProvider(
         api_key=provider_config.api_key,
-        api_key_env=provider_config.api_key_env,
         api_base=provider_config.api_base,
         extra_headers=provider_config.extra_headers,
         extra_body=provider_config.extra_body,
@@ -50,14 +48,12 @@ def make_provider(config: AppConfig) -> ProviderSnapshot:
 def _provider_signature(config: AppConfig, spec: ProviderSpec) -> tuple[object, ...]:
     defaults = config.agents.defaults
     provider_config = config.providers.openai_compat
-    resolved_key = provider_config.api_key or os.environ.get(provider_config.api_key_env)
     return (
         defaults.model,
         defaults.provider,
         spec.backend,
         provider_config.api_base,
-        provider_config.api_key_env,
-        _fingerprint(resolved_key),
+        _fingerprint(provider_config.api_key),
         _stable_items(provider_config.extra_headers),
         _stable_items(provider_config.extra_body),
         provider_config.timeout_seconds,

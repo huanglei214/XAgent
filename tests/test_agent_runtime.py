@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 
 import pytest
@@ -149,3 +151,33 @@ async def test_runtime_prefers_explicit_session_id(tmp_path, monkeypatch) -> Non
     final = await bus.consume_outbound()
     assert final.session_id == "manual:session"
     assert (tmp_path / "sessions" / "manual:session").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_runtime_run_continuously_consumes_inbound(tmp_path, monkeypatch) -> None:
+    runtime, _provider = make_runtime(
+        tmp_path,
+        monkeypatch,
+        [text_response("one"), text_response("two")],
+    )
+    bus = MessageBus()
+    task = asyncio.create_task(runtime.run(bus))
+
+    await bus.publish_inbound(
+        InboundMessage(content="first", channel="test", chat_id="room", sender_id="alice")
+    )
+    await bus.consume_outbound()
+    first_final = await bus.consume_outbound()
+
+    await bus.publish_inbound(
+        InboundMessage(content="second", channel="test", chat_id="room", sender_id="alice")
+    )
+    await bus.consume_outbound()
+    second_final = await bus.consume_outbound()
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert first_final.content == "one"
+    assert second_final.content == "two"

@@ -36,7 +36,11 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - Agent 不应该感知消息来自 CLI、飞书、还是其他 channel。
 - Bus 是进程内邮局，不做持久化，不当事件数据库。
 - 持久化由 Session 负责，主要是 `messages.jsonl` 和 `trace.jsonl`。
-- Channel 负责外部消息源接入和消息发送，不包含 Agent 逻辑。
+- Channel 继承 `BaseChannel`，负责外部消息源接入、消息处理和出站发送，不包含 Agent 逻辑。
+- `BaseChannel` 持有 Bus；具体 channel 在 `handle_message()` 中构造 `InboundMessage` 并 publish 到 Bus。
+- channel 生命周期是 `start()`、`run()`、`handle_message()`、`send()`、`stop()`。
+- `ChannelManager.run()` 是 gateway/channel manager 的长期入口。
+- `ChannelManager.dispatch_outbound()` 只处理单条 Bus outbound 路由，不包含 Agent/runtime 逻辑。
 - CLI chat 走 Bus，用来验证 channel/bus/runtime 路径。
 - CLI 一次性消息 `xagent agent -m "..."` 可以直接调用 Agent，不强制走 Bus。
 
@@ -48,7 +52,7 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `xagent agent -m/--message "..."` 执行一次性消息。
 - `xagent agent -r/--resume <id>` 恢复或创建指定 session。
 - `xagent agent -w/--workspace <path>` 指定 workspace。
-- `xagent gateway` 是未来外部 channel 入口，目前可以保持 placeholder。
+- `xagent gateway` 是外部 channel 长期运行入口；当前支持第一版 `lark` 长连接 channel。
 
 ## Session 和消息约定
 
@@ -62,6 +66,8 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `OutboundEvent` 使用 `channel`、`chat_id`、`reply_to` 表达回复路由。
 - 出站流式状态放在 `StreamState`，用 `StreamKind.DELTA` / `StreamKind.END` 表达增量和结束。
 - 外部平台原始消息 ID 放在 `external_message_id`，不参与 runtime 关联和路由。
+- Lark/飞书 channel 名固定为 `lark`；私聊全部响应，群聊默认只响应 @ 机器人的文本消息。
+- 非流式 channel 可以忽略 `DELTA`，只用 `END.content` 发送完整最终回答。
 
 ## Provider 约定
 

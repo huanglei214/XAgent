@@ -37,8 +37,8 @@ xagent gateway
 
 `xagent` 不带子命令时显示帮助。`xagent agent` 启动 CLI chat，并使用默认
 `cli:default` session。`xagent agent -m/--message` 会直接调用 Agent 执行一条
-一次性消息，同时仍然写入 session 包和 trace。`xagent gateway` 预留给未来的外部
-聊天 channel。`-r/--resume` 按 session 目录名恢复会话；如果 session 不存在则新建。
+一次性消息，同时仍然写入 session 包和 trace。`xagent gateway` 启动已配置的外部
+聊天 channel，目前第一版支持 `lark` 长连接。`-r/--resume` 按 session 目录名恢复会话；如果 session 不存在则新建。
 `-w/--workspace` 为新建 session 指定 workspace 路径。
 
 ## Bus 和 Channels
@@ -48,8 +48,31 @@ xagent gateway
 类似 `lark:<chat_id>` 的身份。
 
 入站消息携带 `channel`、`chat_id` 和 `sender_id`。出站消息通过 `channel`、
-`chat_id`、`reply_to` 和 stream state 完成路由和流式控制。`channels` 包目前只定义
-共享的 channel 协议和 manager，还没有启用真实外部平台 adapter。
+`chat_id`、`reply_to` 和 stream state 完成路由和流式控制。`channels` 包定义
+`BaseChannel` 生命周期抽象和 manager，并提供第一版 `lark` adapter。
+
+## Lark / 飞书 Channel
+
+`xagent gateway` 会读取 `channels.lark` 配置。未启用任何 channel 时，命令会给出配置提示并返回非 0。
+
+```yaml
+channels:
+  lark:
+    enabled: false
+    app_id: null
+    app_secret: null
+    verification_token: null
+    encrypt_key: null
+    domain: "feishu"
+    require_mention: true
+    strip_mention: true
+    auto_reconnect: true
+    log_level: "info"
+```
+
+第一版只处理文本消息：私聊全部响应，群聊默认只有 @ 机器人时响应，并按 `chat_id`
+发送新消息，不做原消息 thread 回复，也不做原生流式更新。开放平台侧需要启用机器人能力、
+事件订阅 `im.message.receive_v1`，并授予消息发送相关权限。
 
 ## Provider 配置
 
@@ -66,13 +89,11 @@ agents:
 providers:
   openai_compat:
     api_key: null
-    api_key_env: "OPENAI_API_KEY"
     api_base: null
     extra_headers: {}
     extra_body: {}
     timeout_seconds: 120
 ```
 
-`providers.openai_compat.api_key` 可以直接配置，也可以让 XAgent 从 `api_key_env`
-指定的环境变量读取。如果两者都没有配置，XAgent 会向 OpenAI-compatible SDK client
-传入 `no-key`，方便本地无鉴权 endpoint 运行。
+`providers.openai_compat.api_key` 直接从配置读取。如果没有配置，XAgent 会向
+OpenAI-compatible SDK client 传入 `no-key`，方便本地无鉴权 endpoint 运行。
