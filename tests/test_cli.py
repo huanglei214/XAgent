@@ -4,11 +4,10 @@ import asyncio
 
 import pytest
 
-from xagent.bus import InboundMessage, MessageBus, OutboundEvent
+from xagent.bus import InboundMessage, MessageBus, OutboundEvent, StreamKind, StreamState
 from xagent.cli import main as cli_main
 from xagent.cli.factory import DEFAULT_CLI_SESSION_ID, build_agent, create_session
 from xagent.config import default_config
-from xagent.providers import ModelEvent
 from xagent.session import SessionStore
 
 
@@ -45,11 +44,11 @@ def test_agent_command_uses_message_resume_and_workspace_aliases(monkeypatch) ->
 
     monkeypatch.setattr(cli_main, "_main", fake_main)
 
-    assert cli_main.main(["agent", "-m", "hello", "-r", "terminal-session", "-w", "/tmp/project"]) == 0
+    assert cli_main.main(["agent", "-m", "hello", "-r", "cli-session", "-w", "/tmp/project"]) == 0
 
     assert seen == cli_main.AgentCliArgs(
         message="hello",
-        resume="terminal-session",
+        resume="cli-session",
         workspace="/tmp/project",
     )
 
@@ -70,7 +69,7 @@ def test_agent_command_supports_long_option_names(monkeypatch) -> None:
             "--message",
             "hello",
             "--resume",
-            "terminal-session",
+            "cli-session",
             "--workspace",
             "/tmp/project",
         ]
@@ -78,7 +77,7 @@ def test_agent_command_supports_long_option_names(monkeypatch) -> None:
 
     assert seen == cli_main.AgentCliArgs(
         message="hello",
-        resume="terminal-session",
+        resume="cli-session",
         workspace="/tmp/project",
     )
 
@@ -161,38 +160,19 @@ def test_shutdown_loop_closes_async_generators() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatch_chat_publishes_outbound_without_printing(capsys) -> None:
-    class FakeAgent:
-        session = type("SessionStub", (), {"session_id": "cli:default"})()
-
-        async def run(self, content, *, on_event):
-            await on_event(ModelEvent.text_delta("hello"))
-            return {"content": "hello"}
-
-    bus = MessageBus()
-    inbound = InboundMessage(content="hi", session_id="cli:default")
-    await bus.publish_inbound(inbound)
-
-    await cli_main._dispatch_chat_once(FakeAgent(), bus)  # type: ignore[arg-type]
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    delta = await bus.consume_outbound()
-    final = await bus.consume_outbound()
-    assert delta == OutboundEvent(kind="delta", content="hello", inbound_id=inbound.id)
-    assert final.kind == "final"
-    assert final.content == "hello"
-    assert final.inbound_id == inbound.id
-
-
-@pytest.mark.asyncio
 async def test_render_outbound_consumes_events(capsys) -> None:
     bus = MessageBus()
-    await bus.publish_outbound(OutboundEvent(kind="delta", content="hel", inbound_id="in-1"))
-    await bus.publish_outbound(OutboundEvent(kind="delta", content="lo", inbound_id="in-1"))
-    await bus.publish_outbound(OutboundEvent(kind="final", content="hello", inbound_id="in-1"))
+    await bus.publish_outbound(
+        OutboundEvent(content="hel", stream=StreamState(kind=StreamKind.DELTA, stream_id="s1"))
+    )
+    await bus.publish_outbound(
+        OutboundEvent(content="lo", stream=StreamState(kind=StreamKind.DELTA, stream_id="s1"))
+    )
+    await bus.publish_outbound(
+        OutboundEvent(content="hello", stream=StreamState(kind=StreamKind.END, stream_id="s1"))
+    )
 
-    await cli_main._render_outbound_once(bus, "in-1")
+    await cli_main._render_outbound_once(bus)
 
     captured = capsys.readouterr()
     assert captured.out == "hello\n"
@@ -201,12 +181,59 @@ async def test_render_outbound_consumes_events(capsys) -> None:
 @pytest.mark.asyncio
 async def test_render_outbound_prints_errors(capsys) -> None:
     bus = MessageBus()
-    await bus.publish_outbound(OutboundEvent(kind="error", content="boom", inbound_id="in-1"))
+    await bus.publish_outbound(
+        OutboundEvent(
+            content="boom",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+            metadata={"error": True},
+        )
+    )
 
-    await cli_main._render_outbound_once(bus, "in-1")
+    await cli_main._render_outbound_once(bus)
 
     captured = capsys.readouterr()
     assert captured.err == "\nError: boom\n"
+
+
+def test_chat_uses_runtime_and_bus(monkeypatch, capsys) -> None:
+    seen: InboundMessage | None = None
+
+    class FakeRuntime:
+        async def dispatch_once(self, bus: MessageBus) -> None:
+            nonlocal seen
+            seen = await bus.consume_inbound()
+            await bus.publish_outbound(
+                OutboundEvent(
+                    channel=seen.channel,
+                    chat_id=seen.chat_id,
+                    reply_to=seen.sender_id,
+                    session_id=seen.session_id,
+                    stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+                )
+            )
+
+    inputs = iter(["hello", "exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+
+    assert (
+        cli_main._chat(
+            FakeRuntime(),  # type: ignore[arg-type]
+            "cli:default",
+            channel="cli",
+            chat_id="default",
+            sender_id="user",
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    assert "Type 'exit' or 'quit' to leave." in captured.out
+    assert seen is not None
+    assert seen.content == "hello"
+    assert seen.channel == "cli"
+    assert seen.chat_id == "default"
+    assert seen.sender_id == "user"
+    assert seen.session_id == "cli:default"
 
 
 def test_build_agent_uses_provider_factory_model(tmp_path) -> None:

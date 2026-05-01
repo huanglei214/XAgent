@@ -9,16 +9,24 @@ import click
 import typer
 from typer.main import get_command
 
-from xagent.agent import Agent
-from xagent.bus import InboundMessage, MessageBus, OutboundEvent
-from xagent.cli.factory import build_agent, create_session, resolve_workspace
+from xagent.agent import Agent, AgentRuntime
+from xagent.bus import InboundMessage, MessageBus, StreamKind
+from xagent.cli.factory import (
+    DEFAULT_CLI_CHANNEL,
+    DEFAULT_CLI_CHAT_ID,
+    DEFAULT_CLI_SENDER_ID,
+    build_agent,
+    create_session,
+    resolve_workspace,
+)
 from xagent.config import ensure_config
 from xagent.providers import ModelEvent
 
 
 app = typer.Typer(
     add_completion=False,
-    no_args_is_help=True,
+    invoke_without_command=True,
+    no_args_is_help=False,
     context_settings={"help_option_names": ["-h", "--help"]},
     rich_markup_mode=None,
     pretty_exceptions_enable=False,
@@ -35,10 +43,6 @@ class AgentCliArgs:
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     command = get_command(app)
-    if not args:
-        with click.Context(command, info_name="xagent") as context:
-            click.echo(command.get_help(context))
-        return 0
     try:
         result = command.main(
             args=args,
@@ -54,6 +58,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         click.echo("Aborted!", err=True)
         return 1
     return result if isinstance(result, int) else 0
+
+
+@app.callback()
+def root(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit(0)
 
 
 @app.command("agent")
@@ -94,12 +105,19 @@ def _main(args: AgentCliArgs) -> int:
     workspace_path = resolve_workspace(config, args.workspace)
     workspace_path.mkdir(parents=True, exist_ok=True)
     session = create_session(config=config, workspace_path=workspace_path, resume=args.resume)
-    agent = build_agent(config=config, session=session)
     print(f"Session: {session.session_id}")
     print(f"Workspace: {session.workspace_path}")
     if args.message is not None:
+        agent = build_agent(config=config, session=session)
         return asyncio.run(_run_once(agent, args.message))
-    return _chat(agent, session.session_id)
+    runtime = AgentRuntime(config=config, workspace_path=workspace_path)
+    return _chat(
+        runtime,
+        session.session_id,
+        channel=DEFAULT_CLI_CHANNEL,
+        chat_id=DEFAULT_CLI_CHAT_ID,
+        sender_id=DEFAULT_CLI_SENDER_ID,
+    )
 
 
 async def _run_once(agent: Agent, message: str) -> int:
@@ -109,7 +127,14 @@ async def _run_once(agent: Agent, message: str) -> int:
     return 0
 
 
-def _chat(agent: Agent, session_id: str) -> int:
+def _chat(
+    runtime: AgentRuntime,
+    session_id: str,
+    *,
+    channel: str,
+    chat_id: str,
+    sender_id: str,
+) -> int:
     bus = MessageBus()
     loop = asyncio.new_event_loop()
     print("Type 'exit' or 'quit' to leave.")
@@ -125,10 +150,16 @@ def _chat(agent: Agent, session_id: str) -> int:
                 return 0
             if not text.strip():
                 continue
-            inbound = InboundMessage(content=text, session_id=session_id)
+            inbound = InboundMessage(
+                content=text,
+                channel=channel,
+                chat_id=chat_id,
+                sender_id=sender_id,
+                session_id=session_id,
+            )
             loop.run_until_complete(bus.publish_inbound(inbound))
-            loop.run_until_complete(_dispatch_chat_once(agent, bus))
-            loop.run_until_complete(_render_outbound_once(bus, inbound.id))
+            loop.run_until_complete(runtime.dispatch_once(bus))
+            loop.run_until_complete(_render_outbound_once(bus))
     finally:
         _shutdown_loop(loop)
 
@@ -146,42 +177,21 @@ def _shutdown_loop(loop: asyncio.AbstractEventLoop) -> None:
     loop.close()
 
 
-async def _dispatch_chat_once(agent: Agent, bus: MessageBus) -> None:
-    inbound = await bus.consume_inbound()
-
-    async def publish_event(event: ModelEvent) -> None:
-        if event.kind == "text_delta":
-            await bus.publish_outbound(
-                OutboundEvent(kind="delta", content=event.text, inbound_id=inbound.id)
-            )
-
-    try:
-        final = await agent.run(inbound.content, on_event=publish_event)
-        await bus.publish_outbound(
-            OutboundEvent(
-                kind="final",
-                content=str(final.get("content") or ""),
-                session_id=agent.session.session_id,
-                inbound_id=inbound.id,
-            )
-        )
-    except Exception as exc:  # noqa: BLE001 - CLI should show failures plainly
-        await bus.publish_outbound(OutboundEvent(kind="error", content=str(exc), inbound_id=inbound.id))
-
-
-async def _render_outbound_once(bus: MessageBus, inbound_id: str) -> None:
+async def _render_outbound_once(bus: MessageBus) -> None:
+    printed_delta = False
     while True:
         event = await bus.consume_outbound()
-        if event.inbound_id != inbound_id:
-            continue
-        if event.kind == "delta":
+        if event.stream is not None and event.stream.kind == StreamKind.DELTA:
             print(event.content, end="", flush=True)
+            printed_delta = True
             continue
-        if event.kind == "final":
-            print()
-            return
-        if event.kind == "error":
+        if event.metadata.get("error"):
             print(f"\nError: {event.content}", file=sys.stderr)
+            return
+        if event.stream is None or event.stream.kind == StreamKind.END:
+            if event.content and not printed_delta:
+                print(event.content, end="", flush=True)
+            print()
             return
 
 

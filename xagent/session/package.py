@@ -18,11 +18,26 @@ def sanitize_id(value: str) -> str:
     return cleaned or uuid4().hex[:8]
 
 
-def new_session_id(source: str = "terminal", external_id: str | None = None) -> str:
-    if external_id:
-        return f"{sanitize_id(source)}-{sanitize_id(external_id)}"
+def new_session_id(channel: str = "cli", chat_id: str | None = None) -> str:
+    if chat_id:
+        return session_id_from_chat(channel, chat_id)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    return f"{sanitize_id(source)}-{stamp}-{uuid4().hex[:6]}"
+    return f"{sanitize_id(channel)}-{stamp}-{uuid4().hex[:6]}"
+
+
+def session_id_from_chat(channel: str, chat_id: str) -> str:
+    return f"{sanitize_id(channel)}:{sanitize_id(chat_id)}"
+
+
+def resolve_session_id(
+    *,
+    channel: str,
+    chat_id: str,
+    session_id: str | None = None,
+) -> str:
+    if session_id:
+        return sanitize_id(session_id)
+    return session_id_from_chat(channel, chat_id)
 
 
 @dataclass
@@ -109,10 +124,10 @@ class SessionStore:
         self,
         *,
         workspace_path: Path,
-        source: str = "terminal",
-        external_id: str | None = None,
+        channel: str = "cli",
+        chat_id: str | None = None,
     ) -> Session:
-        session_id = new_session_id(source=source, external_id=external_id)
+        session_id = new_session_id(channel=channel, chat_id=chat_id)
         return self._initialize(session_id=session_id, workspace_path=workspace_path)
 
     def open_or_create(self, session_id: str, *, workspace_path: Path) -> Session:

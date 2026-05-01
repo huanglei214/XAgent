@@ -7,10 +7,16 @@ from xagent.agent.permissions import Approver, CliApprover
 from xagent.agent.tools import build_default_tools
 from xagent.config import AppConfig
 from xagent.providers import make_provider
-from xagent.session import Session, SessionStore
+from xagent.session import Session, SessionStore, resolve_session_id
 
 
-DEFAULT_CLI_SESSION_ID = "cli:default"
+DEFAULT_CLI_CHANNEL = "cli"
+DEFAULT_CLI_CHAT_ID = "default"
+DEFAULT_CLI_SENDER_ID = "user"
+DEFAULT_CLI_SESSION_ID = resolve_session_id(
+    channel=DEFAULT_CLI_CHANNEL,
+    chat_id=DEFAULT_CLI_CHAT_ID,
+)
 
 
 def resolve_workspace(config: AppConfig, workspace: str | None) -> Path:
@@ -24,9 +30,15 @@ def create_session(
     config: AppConfig,
     workspace_path: Path,
     resume: str | None = None,
+    channel: str = DEFAULT_CLI_CHANNEL,
+    chat_id: str = DEFAULT_CLI_CHAT_ID,
 ) -> Session:
     store = SessionStore(config.sessions_path)
-    session_id = resume or DEFAULT_CLI_SESSION_ID
+    session_id = resolve_session_id(
+        channel=channel,
+        chat_id=chat_id,
+        session_id=resume,
+    )
     return store.open_or_create(session_id, workspace_path=workspace_path)
 
 

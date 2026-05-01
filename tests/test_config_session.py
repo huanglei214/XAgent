@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from xagent.config import ensure_config, xagent_home
-from xagent.session import SessionStore
+from xagent.session import SessionStore, resolve_session_id, session_id_from_chat
 
 
 def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
@@ -35,11 +35,11 @@ def test_session_package_writes_meta_messages_trace_and_artifacts(tmp_path) -> N
     workspace = tmp_path / "project"
     workspace.mkdir()
 
-    session = sessions.create(workspace_path=workspace, source="terminal", external_id="local")
+    session = sessions.create(workspace_path=workspace, channel="cli", chat_id="local")
     session.append_message({"role": "user", "content": "hello"})
     session.append_trace("example", {"ok": True})
 
-    assert session.path.name == "terminal-local"
+    assert session.path.name == "cli:local"
     assert session.artifacts_path.is_dir()
     records = [json.loads(line) for line in session.messages_path.read_text().splitlines()]
     assert records[0]["type"] == "meta"
@@ -48,6 +48,19 @@ def test_session_package_writes_meta_messages_trace_and_artifacts(tmp_path) -> N
     trace = [json.loads(line) for line in session.trace_path.read_text().splitlines()]
     assert trace[1]["type"] == "example"
     assert trace[1]["ok"] is True
+
+
+def test_channel_chat_session_identity_and_explicit_override() -> None:
+    assert session_id_from_chat("cli", "default") == "cli:default"
+    assert resolve_session_id(channel="lark", chat_id="chat_1") == "lark:chat_1"
+    assert (
+        resolve_session_id(
+            channel="lark",
+            chat_id="chat_1",
+            session_id="manual:session",
+        )
+        == "manual:session"
+    )
 
 
 def test_session_open_or_create_reuses_fixed_session_id(tmp_path) -> None:
