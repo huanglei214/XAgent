@@ -94,6 +94,17 @@ async def test_agent_records_plain_text_response(tmp_path) -> None:
     final = await agent.run("hi")
 
     assert final["content"] == "hello"
+    system_prompt = provider.requests[0].messages[0]
+    assert system_prompt["role"] == "system"
+    assert "You are XAgent" in system_prompt["content"]
+    assert "<identity>" in system_prompt["content"]
+    assert "<runtime_context>" in system_prompt["content"]
+    assert "<tool_use>" in system_prompt["content"]
+    assert str(agent.session.workspace_path) in system_prompt["content"]
+    assert agent.session.session_id in system_prompt["content"]
+    assert "test-model" in system_prompt["content"]
+    assert "read_file" not in system_prompt["content"]
+    assert "parameters" not in system_prompt["content"]
     records = agent.session.read_records()
     assert records[1]["message"] == {"role": "user", "content": "hi"}
     assert records[2]["message"] == {"role": "assistant", "content": "hello"}
@@ -177,6 +188,33 @@ async def test_empty_final_response_gets_one_retry(tmp_path) -> None:
 
     assert final["content"] == "non-empty"
     assert len(provider.requests) == 2
+    assert (
+        provider.requests[1].messages[-1]["content"]
+        == "Your previous response was empty. Provide a final answer."
+    )
+
+
+@pytest.mark.asyncio
+async def test_context_compaction_uses_summary_prompt_template(tmp_path) -> None:
+    provider = ScriptedProvider(
+        [
+            text_response("summary"),
+            text_response("final"),
+        ]
+    )
+    agent = make_agent(tmp_path, provider)
+    agent.context_char_threshold = 1
+
+    final = await agent.run("please summarize")
+
+    assert final["content"] == "final"
+    compaction_prompt = provider.requests[0].messages[0]
+    assert compaction_prompt["role"] == "system"
+    assert "Summarize the current task state" in compaction_prompt["content"]
+    assert "<summary_goal>" in compaction_prompt["content"]
+    assert "<must_include>" in compaction_prompt["content"]
+    assert "<summary_style>" in compaction_prompt["content"]
+    assert provider.requests[0].metadata["purpose"] == "compaction"
 
 
 @pytest.mark.asyncio

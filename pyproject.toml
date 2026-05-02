@@ -5,6 +5,7 @@ description = "A greenfield local AI agent runtime."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "jinja2>=3.1.6",
   "lark-oapi>=1.5.3",
   "openai>=1.0",
   "pyyaml>=6.0",
@@ -29,6 +30,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["xagent*"]
+
+[tool.setuptools.package-data]
+xagent = ["prompts/*.md"]
 
 [tool.ruff]
 line-length = 100

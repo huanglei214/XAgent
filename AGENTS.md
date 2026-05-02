@@ -29,6 +29,7 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `xagent/providers/` 放模型 provider 适配层。
 - `xagent/cli/` 放 Typer CLI 入口和 CLI 专属组装逻辑。
 - `xagent/config/` 放用户级配置读取、默认值和解析逻辑。
+- `xagent/prompts/` 只放内置 Markdown prompt 模板文件。
 
 ## 架构边界
 
@@ -77,6 +78,8 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - 当前只支持 `openai_compat` backend。
 - Provider 错误直接抛出，由 Agent 或 AgentRuntime 捕获并写 trace / outbound error。
 - 不做 prompt 模拟工具调用；provider 需要原生支持 OpenAI-style tool calling。
+- system、summary、empty retry prompt 来自 `xagent/prompts/*.md`，通过 Jinja2 严格渲染。
+- prompt 模板可以使用浅层 XML 风格标签分区；标签只作为结构约定，不做 parser 校验。
 
 ## Tools 约定
 

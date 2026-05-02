@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Awaitable, Callable
 
+from xagent.agent.prompts import PromptRenderer
 from xagent.agent.tools.registry import ToolExecution, ToolRegistry
 from xagent.providers.types import ModelEvent, ModelRequest, Provider
 from xagent.providers.util import MessageBuilder
@@ -24,7 +25,7 @@ class Agent:
     model: str
     session: Session
     tools: ToolRegistry
-    system_prompt: str = "You are XAgent, a helpful local AI agent."
+    prompt_renderer: PromptRenderer = field(default_factory=PromptRenderer)
     temperature: float | None = None
     max_tokens: int | None = None
     max_steps: int = 50
@@ -71,7 +72,7 @@ class Agent:
                 self.session.append_message(
                     {
                         "role": "user",
-                        "content": "Your previous response was empty. Provide a final answer.",
+                        "content": self.prompt_renderer.render("empty_retry.md"),
                     }
                 )
                 continue
@@ -82,7 +83,7 @@ class Agent:
         raise AgentError("Agent stopped: maximum number of steps reached.")
 
     def _build_request(self, *, step: int) -> ModelRequest:
-        messages = [{"role": "system", "content": self.system_prompt}]
+        messages = [{"role": "system", "content": self._render_system_prompt()}]
         messages.extend(self.session.read_model_messages())
         return ModelRequest(
             model=self.model,
@@ -178,10 +179,7 @@ class Agent:
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Summarize the task state, key decisions, file changes, "
-                        "important tool results, and remaining todo items."
-                    ),
+                    "content": self.prompt_renderer.render("summary.md"),
                 },
                 *messages,
             ],
@@ -196,3 +194,12 @@ class Agent:
     def _check_time_budget(self, started_at: float) -> None:
         if perf_counter() - started_at > self.max_duration_seconds:
             raise AgentError("Agent stopped: time budget exceeded.")
+
+    def _render_system_prompt(self) -> str:
+        return self.prompt_renderer.render(
+            "system.md",
+            agent_name="XAgent",
+            workspace_path=str(self.session.workspace_path),
+            session_id=self.session.session_id,
+            model=self.model,
+        )

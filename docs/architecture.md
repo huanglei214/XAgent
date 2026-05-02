@@ -37,6 +37,7 @@ xagent/
   cli/         Typer CLI 入口和 CLI 专属组装逻辑
   config/      用户级配置、默认值和解析
   providers/   模型 provider 协议、factory 和 openai_compat 实现
+  prompts/     内置 Markdown prompt 模板
   session/     session 包、messages.jsonl、trace.jsonl 和 artifacts
 ```
 
@@ -207,6 +208,7 @@ Bus 路径下，runtime 会把 sender 信息写入模型可见用户消息，例
 
 `Agent` 是核心智能逻辑，负责 ReAct 循环：
 
+- 使用 `xagent/prompts/*.md` 构造 system、summary 和空回复重试 prompt。
 - 构造 OpenAI-compatible 模型消息。
 - 调用 provider stream。
 - 聚合文本和 tool call。
@@ -301,6 +303,9 @@ trace:
 summary，并写入 `messages.jsonl`。后续构造上下文时，最新 summary 会作为 system message
 进入模型可见消息。
 
+Prompt 模板仍然是普通 Markdown + Jinja2。模板可以使用浅层 XML 风格标签做语义分区，
+例如 `<identity>`、`<runtime_context>`、`<tool_use>`，但第一版不引入 XML parser 或机器校验。
+
 ## Config
 
 第一版配置位于 `~/.xagent/config.yaml`，核心结构是：
@@ -353,6 +358,7 @@ channels:
 - `messages.jsonl` / `trace.jsonl` 持久化。
 - OpenAI-compatible provider factory。
 - Provider stream event 聚合。
+- Jinja2 Markdown prompt 模板渲染。
 - 工具 class、schema registry、权限 approver 和基础内置工具。
 - `BaseChannel` 生命周期抽象和 ChannelManager。
 - 第一版 `lark` 长连接文本 channel。
