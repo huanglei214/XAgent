@@ -5,8 +5,10 @@ import asyncio
 import pytest
 
 from xagent.bus import InboundMessage, MessageBus, OutboundEvent, StreamKind, StreamState
+from xagent.cli import agent as cli_agent
+from xagent.cli import gateway as cli_gateway
 from xagent.cli import main as cli_main
-from xagent.cli.factory import DEFAULT_CLI_SESSION_ID, build_agent, create_session
+from xagent.cli.agent import build_agent
 from xagent.config import default_config
 from xagent.session import SessionStore
 
@@ -15,7 +17,7 @@ def test_gateway_without_enabled_channels_returns_hint(monkeypatch, tmp_path, ca
     config = default_config()
     config.workspace.default_path = str(tmp_path / "workspace")
     config.workspace.sessions_path = str(tmp_path / "sessions")
-    monkeypatch.setattr(cli_main, "ensure_config", lambda *, interactive: config)
+    monkeypatch.setattr(cli_gateway, "ensure_config", lambda *, interactive: config)
 
     assert cli_main.main(["gateway"]) == 1
     captured = capsys.readouterr()
@@ -50,11 +52,11 @@ def test_gateway_builds_channel_manager_and_runtime(monkeypatch, tmp_path, capsy
         assert bus is bus_seen
         return 0
 
-    monkeypatch.setattr(cli_main, "ensure_config", lambda *, interactive: config)
-    monkeypatch.setattr(cli_main, "build_channels", lambda config, bus: fake_channels)
-    monkeypatch.setattr(cli_main, "AgentRuntime", FakeRuntime)
-    monkeypatch.setattr(cli_main, "ChannelManager", FakeManager)
-    monkeypatch.setattr(cli_main, "_run_gateway", fake_run_gateway)
+    monkeypatch.setattr(cli_gateway, "ensure_config", lambda *, interactive: config)
+    monkeypatch.setattr(cli_gateway, "build_channels", lambda config, bus: fake_channels)
+    monkeypatch.setattr(cli_gateway, "AgentRuntime", FakeRuntime)
+    monkeypatch.setattr(cli_gateway, "ChannelManager", FakeManager)
+    monkeypatch.setattr(cli_gateway, "_run_gateway", fake_run_gateway)
 
     assert cli_main.main(["gateway"]) == 0
     captured = capsys.readouterr()
@@ -100,7 +102,7 @@ def test_agent_command_uses_message_resume_and_workspace_aliases(monkeypatch) ->
         }
         return 0
 
-    monkeypatch.setattr(cli_main, "_run_agent_command", fake_run_agent_command)
+    monkeypatch.setattr(cli_agent, "_run_agent_command", fake_run_agent_command)
 
     assert cli_main.main(["agent", "-m", "hello", "-r", "cli-session", "-w", "/tmp/project"]) == 0
 
@@ -128,7 +130,7 @@ def test_agent_command_supports_long_option_names(monkeypatch) -> None:
         }
         return 0
 
-    monkeypatch.setattr(cli_main, "_run_agent_command", fake_run_agent_command)
+    monkeypatch.setattr(cli_agent, "_run_agent_command", fake_run_agent_command)
 
     assert cli_main.main(
         [
@@ -176,7 +178,7 @@ def test_agent_control_c_exits_with_byebye(monkeypatch, capsys) -> None:
     ) -> int:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli_main, "_run_agent_command", fake_run_agent_command)
+    monkeypatch.setattr(cli_agent, "_run_agent_command", fake_run_agent_command)
 
     assert cli_main.main(["agent"]) == 0
     captured = capsys.readouterr()
@@ -200,7 +202,7 @@ def test_shutdown_loop_cancels_pending_tasks() -> None:
     loop.create_task(pending_forever())
     loop.run_until_complete(asyncio.sleep(0))
 
-    cli_main._shutdown_loop(loop)
+    cli_agent._shutdown_loop(loop)
 
     assert cancelled is True
     assert loop.is_closed()
@@ -225,7 +227,7 @@ def test_shutdown_loop_closes_async_generators() -> None:
     asyncio.set_event_loop(loop)
     loop.run_until_complete(consume_one_chunk())
 
-    cli_main._shutdown_loop(loop)
+    cli_agent._shutdown_loop(loop)
 
     assert closed is True
     assert loop.is_closed()
@@ -244,7 +246,7 @@ async def test_render_outbound_consumes_events(capsys) -> None:
         OutboundEvent(content="hello", stream=StreamState(kind=StreamKind.END, stream_id="s1"))
     )
 
-    await cli_main._render_outbound_once(bus)
+    await cli_agent._render_outbound_once(bus)
 
     captured = capsys.readouterr()
     assert captured.out == "hello\n"
@@ -261,7 +263,7 @@ async def test_render_outbound_prints_errors(capsys) -> None:
         )
     )
 
-    await cli_main._render_outbound_once(bus)
+    await cli_agent._render_outbound_once(bus)
 
     captured = capsys.readouterr()
     assert captured.err == "\nError: boom\n"
@@ -288,7 +290,7 @@ def test_chat_uses_runtime_and_bus(monkeypatch, capsys) -> None:
     monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
 
     assert (
-        cli_main._chat(
+        cli_agent._chat(
             FakeRuntime(),  # type: ignore[arg-type]
             "cli:default",
             channel="cli",
@@ -340,32 +342,3 @@ def test_build_agent_uses_shell_policy_config(tmp_path) -> None:
     assert shell is not None
     assert getattr(shell, "shell_policy").default == "deny"
     assert getattr(shell, "shell_policy").blacklist == ("sudo",)
-
-
-def test_create_session_defaults_to_cli_default_and_reuses_it(tmp_path) -> None:
-    config = default_config()
-    config.workspace.sessions_path = str(tmp_path / "sessions")
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-
-    first = create_session(config=config, workspace_path=workspace)
-    first.append_message({"role": "user", "content": "hello"})
-    second = create_session(config=config, workspace_path=workspace)
-
-    assert first.session_id == DEFAULT_CLI_SESSION_ID
-    assert second.session_id == DEFAULT_CLI_SESSION_ID
-    assert second.path == first.path
-    assert second.read_records()[1]["message"] == {"role": "user", "content": "hello"}
-
-
-def test_create_session_resume_creates_missing_session_id(tmp_path) -> None:
-    config = default_config()
-    config.workspace.sessions_path = str(tmp_path / "sessions")
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-
-    created = create_session(config=config, workspace_path=workspace, resume="cli:experiment")
-    reopened = create_session(config=config, workspace_path=workspace, resume="cli:experiment")
-
-    assert created.session_id == "cli:experiment"
-    assert reopened.path == created.path

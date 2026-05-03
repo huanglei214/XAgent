@@ -11,6 +11,7 @@ from xagent.agent.permissions import SessionApprover
 from xagent.bus import InboundMessage, MessageBus, StreamKind
 from xagent.config import default_config
 from xagent.providers import ModelEvent, ModelRequest, ProviderSnapshot
+from xagent.session import SessionStore
 
 
 class ScriptedProvider:
@@ -166,6 +167,46 @@ def test_runtime_builds_agent_with_shell_policy_config(tmp_path, monkeypatch) ->
     assert shell is not None
     assert getattr(shell, "shell_policy").default == "deny"
     assert getattr(shell, "shell_policy").blacklist == ("sudo",)
+
+
+def test_runtime_session_for_uses_session_store_open_for_chat(tmp_path, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class TrackingSessionStore(SessionStore):
+        def open_for_chat(self, **kwargs):
+            calls.append(kwargs)
+            return super().open_for_chat(**kwargs)
+
+    config = default_config()
+    config.workspace.sessions_path = str(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(runtime_module, "SessionStore", TrackingSessionStore)
+    runtime = runtime_module.AgentRuntime(
+        config=config,
+        workspace_path=workspace,
+        approver=SessionApprover(default_allow=True),
+    )
+
+    session = runtime.session_for(
+        InboundMessage(
+            content="hi",
+            channel="test",
+            chat_id="room",
+            sender_id="alice",
+            session_id="manual:session",
+        )
+    )
+
+    assert session.session_id == "manual:session"
+    assert calls == [
+        {
+            "workspace_path": workspace,
+            "channel": "test",
+            "chat_id": "room",
+            "session_id": "manual:session",
+        }
+    ]
 
 
 @pytest.mark.asyncio

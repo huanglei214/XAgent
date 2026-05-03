@@ -27,7 +27,8 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `xagent/bus/` 是进程内消息邮局，只做 inbound/outbound 路由。
 - `xagent/channels/` 放外部消息源抽象；CLI 不放在这个包里。
 - `xagent/providers/` 放模型 provider 适配层。
-- `xagent/cli/` 放 Typer CLI 入口和 CLI 专属组装逻辑。
+- `xagent/cli/` 放 Typer CLI：`main.py` 只保留 root app 和 console script 入口，
+  `agent.py` / `gateway.py` 分别放同名子命令逻辑，`workspace.py` 放共享 workspace 路径解析。
 - `xagent/config/` 放用户级配置读取、默认值和解析逻辑。
 - `xagent/prompts/` 只放内置 Markdown prompt 模板文件。
 - `xagent/agent/tools/` 使用平铺模块组织：`base.py` / `registry.py` 是机制层，
@@ -40,6 +41,8 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - Agent 不应该感知消息来自 CLI、飞书、还是其他 channel。
 - Bus 是进程内邮局，不做持久化，不当事件数据库。
 - 持久化由 Session 负责，主要是 `messages.jsonl` 和 `trace.jsonl`。
+- `SessionStore.open_for_chat()` 是 `channel/chat_id/session_id override` 到 session 包的统一入口；
+  CLI 和 AgentRuntime 都应该复用它。
 - Channel 继承 `BaseChannel`，负责外部消息源接入、消息处理和出站发送，不包含 Agent 逻辑。
 - `BaseChannel` 持有 Bus；具体 channel 在 `handle_message()` 中构造 `InboundMessage` 并 publish 到 Bus。
 - channel 生命周期是 `start()`、`run()`、`handle_message()`、`send()`、`stop()`。
@@ -47,6 +50,7 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `ChannelManager.dispatch_outbound()` 只处理单条 Bus outbound 路由，不包含 Agent/runtime 逻辑。
 - CLI chat 走 Bus，用来验证 channel/bus/runtime 路径。
 - CLI 一次性消息 `xagent agent -m "..."` 可以直接调用 Agent，不强制走 Bus。
+- CLI 专属的 `build_agent()` 放在 `xagent/cli/agent.py`；通用 session 规则不要放回 CLI helper。
 
 ## CLI 约定
 

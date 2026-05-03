@@ -34,7 +34,12 @@ class AgentRuntime:
         session = self._sessions.get(session_id)
         if session is None:
             store = SessionStore(self.config.sessions_path)
-            session = store.open_or_create(session_id, workspace_path=self.workspace_path)
+            session = store.open_for_chat(
+                workspace_path=self.workspace_path,
+                channel=inbound.channel,
+                chat_id=inbound.chat_id,
+                session_id=inbound.session_id,
+            )
             self._sessions[session_id] = session
         return session
 

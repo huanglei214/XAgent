@@ -144,6 +144,21 @@ class SessionStore:
             ensure_unique=False,
         )
 
+    def open_for_chat(
+        self,
+        *,
+        workspace_path: Path,
+        channel: str,
+        chat_id: str,
+        session_id: str | None = None,
+    ) -> Session:
+        resolved_session_id = resolve_session_id(
+            channel=channel,
+            chat_id=chat_id,
+            session_id=session_id,
+        )
+        return self.open_or_create(resolved_session_id, workspace_path=workspace_path)
+
     def open(self, session_id: str) -> Session:
         path = self.sessions_path / sanitize_id(session_id)
         messages_path = path / "messages.jsonl"

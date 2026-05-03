@@ -211,6 +211,51 @@ def test_session_open_or_create_reuses_fixed_session_id(tmp_path) -> None:
     assert second.read_records()[1]["message"] == {"role": "user", "content": "hello"}
 
 
+def test_session_open_for_chat_defaults_to_channel_chat_identity(tmp_path) -> None:
+    sessions = SessionStore(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    first = sessions.open_for_chat(
+        workspace_path=workspace,
+        channel="cli",
+        chat_id="default",
+    )
+    first.append_message({"role": "user", "content": "hello"})
+    second = sessions.open_for_chat(
+        workspace_path=workspace,
+        channel="cli",
+        chat_id="default",
+    )
+
+    assert first.session_id == "cli:default"
+    assert second.session_id == "cli:default"
+    assert second.path == first.path
+    assert second.read_records()[1]["message"] == {"role": "user", "content": "hello"}
+
+
+def test_session_open_for_chat_explicit_session_id_wins(tmp_path) -> None:
+    sessions = SessionStore(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    created = sessions.open_for_chat(
+        workspace_path=workspace,
+        channel="cli",
+        chat_id="default",
+        session_id="cli:experiment",
+    )
+    reopened = sessions.open_for_chat(
+        workspace_path=workspace,
+        channel="cli",
+        chat_id="default",
+        session_id="cli:experiment",
+    )
+
+    assert created.session_id == "cli:experiment"
+    assert reopened.path == created.path
+
+
 def test_session_summary_becomes_model_visible_system_message(tmp_path) -> None:
     sessions = SessionStore(tmp_path / "sessions")
     workspace = tmp_path / "workspace"
