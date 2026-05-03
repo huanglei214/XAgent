@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from xagent.config import LarkChannelConfig, ensure_config, load_config, xagent_home
+from xagent.config import (
+    DEFAULT_SHELL_BLACKLIST,
+    LarkChannelConfig,
+    ensure_config,
+    load_config,
+    xagent_home,
+)
 from xagent.session import SessionStore, resolve_session_id, session_id_from_chat
 
 
@@ -27,9 +33,16 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert config.providers.openai_compat.api_key is None
     assert config.trace.raw_model_io is False
     assert config.trace.model_events is False
+    assert config.permissions.shell.default == "allow"
+    assert config.permissions.shell.blacklist == list(DEFAULT_SHELL_BLACKLIST)
     config_text = (tmp_path / "home" / "config.yaml").read_text(encoding="utf-8")
     assert "agents:" in config_text
     assert "providers:" in config_text
+    assert "permissions:" in config_text
+    assert "shell:" in config_text
+    assert "default: allow" in config_text
+    assert "- rm" in config_text
+    assert "command_default" not in config_text
     assert "channels:" in config_text
     assert "lark:" in config_text
     assert "raw_model_io: false" in config_text
@@ -111,6 +124,42 @@ providers:
     config = load_config(path)
 
     assert config.providers.openai_compat.api_key is None
+
+
+def test_shell_permission_config_loads_custom_blacklist(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+permissions:
+  shell:
+    default: ask
+    blacklist:
+      - rm
+      - npm install
+      - ">"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.permissions.shell.default == "ask"
+    assert config.permissions.shell.blacklist == ["rm", "npm install", ">"]
+
+
+def test_shell_permission_config_rejects_unknown_default(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+permissions:
+  shell:
+    default: maybe
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="permissions.shell.default"):
+        load_config(path)
 
 
 def test_session_package_writes_meta_messages_trace_and_artifacts(tmp_path) -> None:

@@ -30,6 +30,9 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `xagent/cli/` 放 Typer CLI 入口和 CLI 专属组装逻辑。
 - `xagent/config/` 放用户级配置读取、默认值和解析逻辑。
 - `xagent/prompts/` 只放内置 Markdown prompt 模板文件。
+- `xagent/agent/tools/` 使用平铺模块组织：`base.py` / `registry.py` 是机制层，
+  `files.py` / `search.py` / `shell.py` / `web.py` / `interaction.py` 是具体能力，
+  `default_tools.py` 只做默认工具注册装配。
 
 ## 架构边界
 
@@ -87,8 +90,13 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - schema 通过类装饰器显式声明，并统一转换成 OpenAI function schema。
 - 工具注册时通过构造函数注入实际需要的依赖，不传大而全的 AgentContext。
 - 工具内部负责具体权限检查。
+- `ToolRegistry` 只负责注册、schema 输出、参数解析和执行调度，不 import 具体工具。
 - registry/Agent 统一记录工具输入、输出、错误和耗时。
 - `read_only` 且非 `exclusive` 的工具可以并行；写文件、shell、外部网络/API 默认串行或独占。
+- `read_file` / `search` 默认允许；只读探索优先使用这两个工具。
+- `shell` 默认允许普通命令，但会先经过 `permissions.shell.blacklist`；命中黑名单时直接返回
+  tool error，不再请求授权覆盖。
+- `permissions.shell.default` 支持 `allow` / `ask` / `deny`，第一版默认是 `allow`。
 
 ## 测试和质量门禁
 

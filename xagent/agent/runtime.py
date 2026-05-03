@@ -7,6 +7,7 @@ from uuid import uuid4
 from xagent.agent.loop import Agent
 from xagent.agent.permissions import Approver, CliApprover
 from xagent.agent.tools import build_default_tools
+from xagent.agent.tools.shell import ShellPolicy
 from xagent.bus import InboundMessage, MessageBus, OutboundEvent, StreamKind, StreamState
 from xagent.config import AppConfig
 from xagent.providers import ModelEvent, make_provider
@@ -45,6 +46,7 @@ class AgentRuntime:
             tools = build_default_tools(
                 workspace=session.workspace_path,
                 approver=self.approver or CliApprover(),
+                shell_policy=ShellPolicy.from_config(self.config.permissions.shell),
             )
             agent = Agent(
                 provider=snapshot.provider,

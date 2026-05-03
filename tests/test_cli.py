@@ -84,33 +84,51 @@ def test_root_accepts_short_help_option(capsys) -> None:
 
 
 def test_agent_command_uses_message_resume_and_workspace_aliases(monkeypatch) -> None:
-    seen: cli_main.AgentCliArgs | None = None
+    seen: dict[str, str | None] | None = None
 
-    def fake_main(args: cli_main.AgentCliArgs) -> int:
+    def fake_run_agent_command(
+        *,
+        message: str | None = None,
+        resume: str | None = None,
+        workspace: str | None = None,
+    ) -> int:
         nonlocal seen
-        seen = args
+        seen = {
+            "message": message,
+            "resume": resume,
+            "workspace": workspace,
+        }
         return 0
 
-    monkeypatch.setattr(cli_main, "_main", fake_main)
+    monkeypatch.setattr(cli_main, "_run_agent_command", fake_run_agent_command)
 
     assert cli_main.main(["agent", "-m", "hello", "-r", "cli-session", "-w", "/tmp/project"]) == 0
 
-    assert seen == cli_main.AgentCliArgs(
-        message="hello",
-        resume="cli-session",
-        workspace="/tmp/project",
-    )
+    assert seen == {
+        "message": "hello",
+        "resume": "cli-session",
+        "workspace": "/tmp/project",
+    }
 
 
 def test_agent_command_supports_long_option_names(monkeypatch) -> None:
-    seen: cli_main.AgentCliArgs | None = None
+    seen: dict[str, str | None] | None = None
 
-    def fake_main(args: cli_main.AgentCliArgs) -> int:
+    def fake_run_agent_command(
+        *,
+        message: str | None = None,
+        resume: str | None = None,
+        workspace: str | None = None,
+    ) -> int:
         nonlocal seen
-        seen = args
+        seen = {
+            "message": message,
+            "resume": resume,
+            "workspace": workspace,
+        }
         return 0
 
-    monkeypatch.setattr(cli_main, "_main", fake_main)
+    monkeypatch.setattr(cli_main, "_run_agent_command", fake_run_agent_command)
 
     assert cli_main.main(
         [
@@ -124,11 +142,11 @@ def test_agent_command_supports_long_option_names(monkeypatch) -> None:
         ]
     ) == 0
 
-    assert seen == cli_main.AgentCliArgs(
-        message="hello",
-        resume="cli-session",
-        workspace="/tmp/project",
-    )
+    assert seen == {
+        "message": "hello",
+        "resume": "cli-session",
+        "workspace": "/tmp/project",
+    }
 
 
 def test_agent_help_lists_expected_options(capsys) -> None:
@@ -150,10 +168,15 @@ def test_agent_accepts_short_help_option(capsys) -> None:
 
 
 def test_agent_control_c_exits_with_byebye(monkeypatch, capsys) -> None:
-    def fake_main(args: cli_main.AgentCliArgs) -> int:
+    def fake_run_agent_command(
+        *,
+        message: str | None = None,
+        resume: str | None = None,
+        workspace: str | None = None,
+    ) -> int:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli_main, "_main", fake_main)
+    monkeypatch.setattr(cli_main, "_run_agent_command", fake_run_agent_command)
 
     assert cli_main.main(["agent"]) == 0
     captured = capsys.readouterr()
@@ -303,6 +326,20 @@ def test_build_agent_uses_trace_model_events_config(tmp_path) -> None:
     agent = build_agent(config=config, session=session)
 
     assert agent.trace_model_events is True
+
+
+def test_build_agent_uses_shell_policy_config(tmp_path) -> None:
+    config = default_config()
+    config.permissions.shell.default = "deny"
+    config.permissions.shell.blacklist = ["sudo"]
+    session = SessionStore(tmp_path / "sessions").create(workspace_path=tmp_path)
+
+    agent = build_agent(config=config, session=session)
+    shell = agent.tools.get("shell")
+
+    assert shell is not None
+    assert getattr(shell, "shell_policy").default == "deny"
+    assert getattr(shell, "shell_policy").blacklist == ("sudo",)
 
 
 def test_create_session_defaults_to_cli_default_and_reuses_it(tmp_path) -> None:

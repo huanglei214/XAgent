@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from dataclasses import dataclass
 from typing import Annotated, Sequence
 
 import click
@@ -32,13 +31,6 @@ app = typer.Typer(
     rich_markup_mode=None,
     pretty_exceptions_enable=False,
 )
-
-
-@dataclass(frozen=True)
-class AgentCliArgs:
-    message: str | None = None
-    resume: str | None = None
-    workspace: str | None = None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -87,9 +79,12 @@ def agent_command(
         ),
     ] = None,
 ) -> None:
-    args = AgentCliArgs(message=message, resume=resume, workspace=workspace)
     try:
-        exit_code = _main(args)
+        exit_code = _run_agent_command(
+            message=message,
+            resume=resume,
+            workspace=workspace,
+        )
     except KeyboardInterrupt:
         typer.echo("\nbyebye!")
         raise typer.Exit(0) from None
@@ -106,16 +101,21 @@ def gateway_command() -> None:
     raise typer.Exit(exit_code)
 
 
-def _main(args: AgentCliArgs) -> int:
+def _run_agent_command(
+    *,
+    message: str | None = None,
+    resume: str | None = None,
+    workspace: str | None = None,
+) -> int:
     config = ensure_config(interactive=True)
-    workspace_path = resolve_workspace(config, args.workspace)
+    workspace_path = resolve_workspace(config, workspace)
     workspace_path.mkdir(parents=True, exist_ok=True)
-    session = create_session(config=config, workspace_path=workspace_path, resume=args.resume)
+    session = create_session(config=config, workspace_path=workspace_path, resume=resume)
     print(f"Session: {session.session_id}")
     print(f"Workspace: {session.workspace_path}")
-    if args.message is not None:
+    if message is not None:
         agent = build_agent(config=config, session=session)
-        return asyncio.run(_run_once(agent, args.message))
+        return asyncio.run(_run_once(agent, message))
     runtime = AgentRuntime(config=config, workspace_path=workspace_path)
     return _chat(
         runtime,

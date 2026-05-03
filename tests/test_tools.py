@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from time import perf_counter
 from typing import Any
 
@@ -8,6 +9,18 @@ import pytest
 
 from xagent.agent.permissions import SessionApprover
 from xagent.agent.tools import Tool, ToolRegistry, ToolResult, build_default_tools, tool
+from xagent.agent.tools import registry as registry_module
+from xagent.agent.tools.shell import ShellPolicy, ShellTool
+
+
+class TrackingApprover:
+    def __init__(self, allowed: bool = True) -> None:
+        self.allowed = allowed
+        self.calls: list[tuple[str, str, str]] = []
+
+    async def require(self, action: str, target: str, *, summary: str = "") -> bool:
+        self.calls.append((action, target, summary))
+        return self.allowed
 
 
 def test_tool_decorator_exports_openai_function_schema(tmp_path) -> None:
@@ -21,6 +34,28 @@ def test_tool_decorator_exports_openai_function_schema(tmp_path) -> None:
 
     assert read_schema["type"] == "function"
     assert read_schema["function"]["parameters"]["required"] == ["path"]
+
+
+def test_tool_import_surfaces_stay_stable() -> None:
+    from xagent.agent.tools import build_default_tools as exported_build_default_tools
+    from xagent.agent.tools.registry import ToolRegistry as RegistryOnly
+    from xagent.agent.tools.shell import ShellPolicy as ExportedShellPolicy
+    from xagent.agent.tools.shell import ShellTool as ExportedShellTool
+
+    assert exported_build_default_tools is build_default_tools
+    assert RegistryOnly is ToolRegistry
+    assert ExportedShellPolicy is ShellPolicy
+    assert ExportedShellTool is ShellTool
+
+
+def test_registry_module_does_not_import_concrete_tools() -> None:
+    source = inspect.getsource(registry_module)
+
+    assert "xagent.agent.tools.files" not in source
+    assert "xagent.agent.tools.search" not in source
+    assert "xagent.agent.tools.shell" not in source
+    assert "xagent.agent.tools.web" not in source
+    assert "xagent.agent.tools.interaction" not in source
 
 
 @pytest.mark.asyncio
@@ -123,3 +158,65 @@ async def test_read_only_tools_parallelize_but_exclusive_tools_serialize() -> No
 
     assert elapsed < 0.7
     assert seen[-2:] == ["c", "d"]
+
+
+def test_shell_policy_allows_common_read_only_commands() -> None:
+    policy = ShellPolicy()
+
+    assert policy.match_blacklist("ls") is None
+    assert policy.match_blacklist("pwd") is None
+    assert policy.match_blacklist("rg foo") is None
+
+
+@pytest.mark.parametrize(
+    ("command", "rule"),
+    [
+        ("rm -rf tmp", "rm"),
+        ("sudo ls", "sudo"),
+        ("curl https://example.com", "curl"),
+        ("npm install", "npm install"),
+        ("uv pip install requests", "uv pip install"),
+        ("echo hi > file", ">"),
+    ],
+)
+def test_shell_policy_blocks_blacklisted_commands(command: str, rule: str) -> None:
+    assert ShellPolicy().match_blacklist(command) == rule
+
+
+def test_shell_policy_does_not_treat_quoted_argument_as_command() -> None:
+    assert ShellPolicy().match_blacklist('echo "rm"') is None
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_default_allow_does_not_call_approver(tmp_path) -> None:
+    approver = TrackingApprover()
+    tool = ShellTool(tmp_path, approver, shell_policy=ShellPolicy(default="allow"))
+
+    result = await tool.execute("pwd")
+
+    assert result.is_error is False
+    assert str(tmp_path) in result.content
+    assert approver.calls == []
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_blacklist_returns_error_without_execution_or_approval(tmp_path) -> None:
+    approver = TrackingApprover()
+    tool = ShellTool(tmp_path, approver, shell_policy=ShellPolicy(default="allow"))
+
+    result = await tool.execute("rm -rf tmp")
+
+    assert result.is_error is True
+    assert "blacklist rule: rm" in result.content
+    assert approver.calls == []
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_default_ask_keeps_approver_flow(tmp_path) -> None:
+    approver = TrackingApprover()
+    tool = ShellTool(tmp_path, approver, shell_policy=ShellPolicy(default="ask"))
+
+    result = await tool.execute("pwd")
+
+    assert result.is_error is False
+    assert approver.calls == [("command", tmp_path.as_posix(), "pwd")]

@@ -264,12 +264,23 @@ function schema。
 工具注册时只注入实际需要的依赖，不传大而全的 AgentContext。权限检查由工具内部和
 approver 协作完成。
 
+`xagent/agent/tools/` 按能力平铺拆分：`base.py` / `registry.py` 是机制层，
+`files.py` / `search.py` / `shell.py` / `web.py` / `interaction.py` 放具体工具，
+`default_tools.py` 只负责默认工具集合装配。`ToolRegistry` 不 import 具体工具。
+
 工具元信息包括：
 
 - `read_only`
 - `exclusive`
 
 只读且非独占工具可以并行。写文件、shell、外部网络/API 默认串行或独占。
+`read_file` / `search` 默认允许；`apply_patch` 和 `http_request` 继续走权限确认。
+`shell` 默认允许普通命令，但会先经过黑名单策略，命中规则时直接作为 tool error 返回，
+不会再请求用户授权覆盖。
+
+Shell 黑名单使用 `shlex` 做词法切分。规则可以是单 token，例如 `rm`、`sudo`，也可以是连续
+token 序列，例如 `npm install`、`uv pip install`。这只是第一版安全下限，不承诺覆盖所有
+shell 方言或间接执行风险。
 
 首批内置工具方向包括：
 
@@ -326,6 +337,17 @@ providers:
     extra_body: {}
     timeout_seconds: 120
 
+permissions:
+  shell:
+    default: "allow"
+    blacklist:
+      - "rm"
+      - "sudo"
+      - "curl"
+      - "npm install"
+      - "uv pip install"
+      - ">"
+
 channels:
   lark:
     enabled: false
@@ -359,7 +381,7 @@ channels:
 - OpenAI-compatible provider factory。
 - Provider stream event 聚合。
 - Jinja2 Markdown prompt 模板渲染。
-- 工具 class、schema registry、权限 approver 和基础内置工具。
+- 工具 class、schema registry、权限 approver 和按类型平铺的基础内置工具。
 - `BaseChannel` 生命周期抽象和 ChannelManager。
 - 第一版 `lark` 长连接文本 channel。
 - `InboundMessage` / `OutboundEvent` 的 channel/chat/sender/reply/stream 模型。

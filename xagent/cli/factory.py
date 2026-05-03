@@ -5,6 +5,7 @@ from pathlib import Path
 from xagent.agent import Agent
 from xagent.agent.permissions import Approver, CliApprover
 from xagent.agent.tools import build_default_tools
+from xagent.agent.tools.shell import ShellPolicy
 from xagent.config import AppConfig
 from xagent.providers import make_provider
 from xagent.session import Session, SessionStore, resolve_session_id
@@ -50,7 +51,11 @@ def build_agent(
 ) -> Agent:
     snapshot = make_provider(config)
     active_approver = approver or CliApprover()
-    tools = build_default_tools(workspace=session.workspace_path, approver=active_approver)
+    tools = build_default_tools(
+        workspace=session.workspace_path,
+        approver=active_approver,
+        shell_policy=ShellPolicy.from_config(config.permissions.shell),
+    )
     return Agent(
         provider=snapshot.provider,
         model=snapshot.model,

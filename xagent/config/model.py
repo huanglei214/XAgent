@@ -9,6 +9,47 @@ from typing import Any
 import yaml  # type: ignore[import-untyped]
 
 
+DEFAULT_SHELL_BLACKLIST: tuple[str, ...] = (
+    "rm",
+    "rmdir",
+    "unlink",
+    "shred",
+    "dd",
+    "mkfs",
+    "chmod",
+    "chown",
+    "chgrp",
+    "sudo",
+    "su",
+    "kill",
+    "killall",
+    "pkill",
+    "curl",
+    "wget",
+    "npx",
+    "npm install",
+    "npm i",
+    "pnpm add",
+    "yarn add",
+    "pip install",
+    "pip3 install",
+    "uv add",
+    "uv pip install",
+    "brew install",
+    "apt install",
+    "apt-get install",
+    "go get",
+    "cargo install",
+    "gem install",
+    ">",
+    ">>",
+    ">|",
+    "&>",
+    "2>",
+    "2>>",
+)
+
+
 def xagent_home() -> Path:
     """Return the user-level XAgent home directory."""
 
@@ -54,12 +95,22 @@ class WorkspaceConfig:
 
 
 @dataclass
+class ShellPermissionConfig:
+    default: str = "allow"
+    blacklist: list[str] = field(default_factory=lambda: list(DEFAULT_SHELL_BLACKLIST))
+
+    def __post_init__(self) -> None:
+        if self.default not in {"allow", "ask", "deny"}:
+            raise ValueError("permissions.shell.default must be 'allow', 'ask', or 'deny'")
+
+
+@dataclass
 class PermissionConfig:
     remember: str = "session"
     read_default: str = "allow"
     write_default: str = "ask"
-    command_default: str = "ask"
     network_default: str = "ask"
+    shell: ShellPermissionConfig = field(default_factory=ShellPermissionConfig)
 
 
 @dataclass
@@ -224,6 +275,17 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         **lark_defaults,
         **{key: value for key, value in lark_payload.items() if key in lark_defaults},
     }
+    permissions_payload = payload.get("permissions", {})
+    if not isinstance(permissions_payload, dict):
+        permissions_payload = {}
+    permission_values = _merge_known_fields(default.permissions, permissions_payload)
+    shell_payload = permissions_payload.get("shell", {})
+    if not isinstance(shell_payload, dict):
+        shell_payload = {}
+    permission_values["shell"] = ShellPermissionConfig(
+        **_merge_known_fields(default.permissions.shell, shell_payload)
+    )
+
     return AppConfig(
         agents=AgentsConfig(
             defaults=AgentDefaultsConfig(
@@ -238,9 +300,7 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         workspace=WorkspaceConfig(
             **{**asdict(default.workspace), **payload.get("workspace", {})}
         ),
-        permissions=PermissionConfig(
-            **{**asdict(default.permissions), **payload.get("permissions", {})}
-        ),
+        permissions=PermissionConfig(**permission_values),
         trace=TraceConfig(**{**asdict(default.trace), **payload.get("trace", {})}),
         tools=ToolsConfig(**{**asdict(default.tools), **payload.get("tools", {})}),
         limits=AgentLimitsConfig(**{**asdict(default.limits), **payload.get("limits", {})}),
@@ -248,3 +308,8 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
             lark=LarkChannelConfig(**lark_values)
         ),
     )
+
+
+def _merge_known_fields(default: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    values = asdict(default)
+    return {**values, **{key: value for key, value in payload.items() if key in values}}

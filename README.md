@@ -97,3 +97,25 @@ providers:
 
 `providers.openai_compat.api_key` 直接从配置读取。如果没有配置，XAgent 会向
 OpenAI-compatible SDK client 传入 `no-key`，方便本地无鉴权 endpoint 运行。
+
+## 权限和 Shell 策略
+
+只读工具 `read_file` / `search` 默认允许。`apply_patch` 和 `http_request` 继续按风险
+动作走确认。`shell` 第一版采用“默认允许 + 黑名单直接拒绝”：普通只读命令不会反复弹授权，
+命中高风险规则时也不会提供授权覆盖。
+
+```yaml
+permissions:
+  shell:
+    default: "allow"  # allow | ask | deny
+    blacklist:
+      - "rm"
+      - "sudo"
+      - "curl"
+      - "npm install"
+      - "uv pip install"
+      - ">"
+```
+
+黑名单使用 `shlex` 词法切分，支持单 token 和连续 token 序列，例如 `npm install`。
+这是基础安全下限，不是完整 shell 沙箱；只读探索仍建议优先使用专门的文件工具。

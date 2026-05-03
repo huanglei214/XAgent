@@ -103,7 +103,7 @@ async def test_agent_records_plain_text_response(tmp_path) -> None:
     assert str(agent.session.workspace_path) in system_prompt["content"]
     assert agent.session.session_id in system_prompt["content"]
     assert "test-model" in system_prompt["content"]
-    assert "read_file" not in system_prompt["content"]
+    assert "shell blacklist" in system_prompt["content"]
     assert "parameters" not in system_prompt["content"]
     records = agent.session.read_records()
     assert records[1]["message"] == {"role": "user", "content": "hi"}
@@ -172,6 +172,33 @@ async def test_tool_argument_parse_error_is_returned_to_model(tmp_path) -> None:
         if record.get("message", {}).get("role") == "tool"
     ]
     assert "Could not parse arguments" in tool_messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_blacklisted_shell_command_returns_tool_error_and_trace(tmp_path) -> None:
+    provider = ScriptedProvider(
+        [
+            tool_response("shell", '{"command": "rm -rf tmp"}'),
+            text_response("done"),
+        ]
+    )
+    agent = make_agent(tmp_path, provider)
+
+    final = await agent.run("run shell")
+
+    assert final["content"] == "done"
+    tool_messages = [
+        record["message"]
+        for record in agent.session.read_records()
+        if record.get("message", {}).get("role") == "tool"
+    ]
+    assert "blacklist rule: rm" in tool_messages[0]["content"]
+    trace_lines = [json.loads(line) for line in agent.session.trace_path.read_text().splitlines()]
+    shell_trace = next(
+        line for line in trace_lines if line.get("type") == "tool_result" and line.get("name") == "shell"
+    )
+    assert shell_trace["is_error"] is True
+    assert "blacklist rule: rm" in shell_trace["content"]
 
 
 @pytest.mark.asyncio

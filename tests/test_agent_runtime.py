@@ -153,6 +153,21 @@ async def test_runtime_prefers_explicit_session_id(tmp_path, monkeypatch) -> Non
     assert (tmp_path / "sessions" / "manual:session").is_dir()
 
 
+def test_runtime_builds_agent_with_shell_policy_config(tmp_path, monkeypatch) -> None:
+    runtime, _provider = make_runtime(tmp_path, monkeypatch, [text_response("hello")])
+    runtime.config.permissions.shell.default = "deny"
+    runtime.config.permissions.shell.blacklist = ["sudo"]
+
+    agent = runtime.agent_for(
+        InboundMessage(content="hi", channel="test", chat_id="room", sender_id="alice")
+    )
+    shell = agent.tools.get("shell")
+
+    assert shell is not None
+    assert getattr(shell, "shell_policy").default == "deny"
+    assert getattr(shell, "shell_policy").blacklist == ("sudo",)
+
+
 @pytest.mark.asyncio
 async def test_runtime_run_continuously_consumes_inbound(tmp_path, monkeypatch) -> None:
     runtime, _provider = make_runtime(
