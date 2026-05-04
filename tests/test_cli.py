@@ -54,7 +54,7 @@ def test_gateway_builds_channel_manager_and_runtime(monkeypatch, tmp_path, capsy
 
     monkeypatch.setattr(cli_gateway, "ensure_config", lambda *, interactive: config)
     monkeypatch.setattr(cli_gateway, "build_channels", lambda config, bus: fake_channels)
-    monkeypatch.setattr(cli_gateway, "AgentRuntime", FakeRuntime)
+    monkeypatch.setattr(cli_gateway, "AgentLoop", FakeRuntime)
     monkeypatch.setattr(cli_gateway, "ChannelManager", FakeManager)
     monkeypatch.setattr(cli_gateway, "_run_gateway", fake_run_gateway)
 

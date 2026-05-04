@@ -11,7 +11,7 @@ XAgent v2 是一个本地通用 AI Agent。它的核心目标是：
 - 在用户级 `~/.xagent` 下管理配置、默认 workspace、session 和 trace。
 - 读取和编辑 workspace 文件，执行命令，调用工具和 API。
 - 通过 CLI 和未来外部聊天 channel 与用户协作。
-- 保持 Agent 核心逻辑与消息来源解耦，让 CLI、飞书或其他 channel 共享同一套 runtime。
+- 保持 Agent 核心逻辑与消息来源解耦，让 CLI、飞书或其他 channel 共享同一套 AgentLoop。
 - 用 OpenAI-compatible 消息和工具调用形态作为 Agent 内部协议，provider 在边界层做适配。
 
 ## 非目标
@@ -31,7 +31,7 @@ XAgent v2 是一个本地通用 AI Agent。它的核心目标是：
 
 ```text
 xagent/
-  agent/       Agent 核心逻辑、runtime、权限、工具、记忆、技能和子 Agent
+  agent/       AgentLoop、AgentRunner、session-bound Agent、权限、工具、记忆、技能和子 Agent
   bus/         进程内 inbound/outbound 消息邮局
   channels/    外部消息源抽象和 channel manager
   cli/         Typer root app、agent/gateway 子命令和 CLI 专属组装逻辑
@@ -46,15 +46,17 @@ xagent/
 ```text
 CLI / Channel
     -> Bus
-      -> AgentRuntime
+      -> AgentLoop
         -> Agent
-          -> Provider
-          -> Tools
+          -> AgentRunner
+            -> Provider
+            -> Tools
         -> Session
 ```
 
 Agent 不反向依赖 CLI 或具体 channel。Channel 负责外部平台接入、消息处理和发送，
-Bus 负责进程内投递，Session 负责持久化，Agent 负责智能循环。
+Bus 负责进程内投递，Session 负责持久化。XAgent 刻意拆成三层：`AgentLoop` 管 Bus
+和多 session，`Agent` 管单 session 的上下文与持久化，`AgentRunner` 管 ReAct 执行内核。
 
 ## 用户数据目录
 
@@ -88,13 +90,13 @@ console script 是 `xagent`。
 - `xagent agent -w/--workspace <path>` 指定 workspace。
 - `xagent gateway` 启动已配置的外部 channel，目前支持第一版 `lark` 长连接。
 
-CLI chat 是类聊天流程，因此走 Bus 和 AgentRuntime，用来验证未来 channel 的主路径。
+CLI chat 是类聊天流程，因此走 Bus 和 AgentLoop，用来验证未来 channel 的主路径。
 一次性 `-m/--message` 是显式旁路，可以直接构建 Agent 并调用 `Agent.run()`，但仍创建
 session 包并写 trace。
 
 `xagent/cli/main.py` 只保留 root Typer app 和 console script 入口。`xagent/cli/agent.py`
 承载 `xagent agent` 的 chat、one-shot、终端渲染和 CLI 专属 Agent 装配逻辑；
-`xagent/cli/gateway.py` 承载 `xagent gateway` 的 channel manager 与 AgentRuntime 长期运行逻辑。
+`xagent/cli/gateway.py` 承载 `xagent gateway` 的 channel manager 与 AgentLoop 长期运行逻辑。
 `xagent/cli/workspace.py` 只放 agent/gateway 共享的 workspace 路径解析。
 
 ## Bus / Channel / Session
@@ -107,7 +109,7 @@ Channel 继承 `BaseChannel`，是外部平台和 Bus 之间的适配器。`Base
 
 Session 身份默认由 `channel:chat_id` 派生，显式 `session_id` override 优先。
 `SessionStore.open_for_chat()` 是打开或创建 chat session 的统一入口；CLI 默认会用它打开
-`cli:default`，gateway 则在 AgentRuntime 收到 inbound 后懒打开对应 channel session。
+`cli:default`，gateway 则在 AgentLoop 收到 inbound 后懒打开对应 channel session。
 
 Channel 生命周期方法是：
 
@@ -193,9 +195,16 @@ session_id = "cli:default"
 
 显式 `--resume/-r <id>` 优先于默认派生规则。如果 session 存在则打开，不存在则创建。
 
-## Agent Runtime
+## AgentLoop / Agent / AgentRunner
 
-`AgentRuntime` 是 Bus 面向 Agent 的运行层。它负责：
+Nanobot 的核心运行职责主要集中在 Agent loop 里。XAgent 保留同样的 loop 思路，但为了学习和
+调试时边界更清楚，显式拆成三层：
+
+- `AgentLoop`：面向 Bus 和多 session 的长期运行层。
+- `Agent`：面向单个 session 的上下文、prompt、summary 和持久化层。
+- `AgentRunner`：纯 ReAct 执行内核。
+
+`AgentLoop` 负责：
 
 - 从 Bus 消费 `InboundMessage`。
 - 解析或创建 session。
@@ -204,8 +213,9 @@ session_id = "cli:default"
 - 将模型文本 delta 转成 `OutboundEvent(stream=DELTA)`。
 - 将最终回答转成 `OutboundEvent(stream=END)`。
 - 捕获异常并发布 `OutboundEvent(stream=END, metadata={"error": true})`。
+- 它不构造 prompt、不执行工具，也不直接写 session message。
 
-Bus 路径下，runtime 会把 sender 信息写入模型可见用户消息，例如：
+Bus 路径下，AgentLoop 会把 sender 信息写入模型可见用户消息，例如：
 
 ```text
 [sender:user_a] 帮我看一下这个文件
@@ -213,18 +223,25 @@ Bus 路径下，runtime 会把 sender 信息写入模型可见用户消息，例
 
 这样 Agent 不需要理解 channel 细节，但模型仍能在群聊场景中知道是谁发言。
 
-## Agent Core
-
-`Agent` 是核心智能逻辑，负责 ReAct 循环：
+`Agent` 表示一个 session-bound agent，负责：
 
 - 使用 `xagent/prompts/*.md` 构造 system、summary 和空回复重试 prompt。
 - 构造 OpenAI-compatible 模型消息。
+- 在收到用户文本后写入 `messages.jsonl`。
+- 在上下文超过阈值后触发 summary 压缩。
+- 把 Runner 的 message / trace callback 写入 session。
+
+`AgentRunner` 负责 ReAct 执行：
+
 - 调用 provider stream。
 - 聚合文本和 tool call。
 - 执行工具。
 - 记录模型请求、最终响应、usage、工具输入输出、错误和耗时。
 - 维护最大步数、最大耗时和重复工具调用预算。
-- 在上下文超过阈值后触发 summary 压缩。
+- 空回复时追加一次修正重试。
+
+`AgentRunner` 不 import `Session`、Bus、Channel 或 PromptRenderer；这些都由外层注入或通过
+callback 连接。
 
 模型可见消息使用 OpenAI 兼容形态：
 
@@ -262,7 +279,7 @@ async def stream(request: ModelRequest) -> AsyncIterator[ModelEvent]
 `providers.openai_compat` 解析，CLI 只消费 factory 产出的 provider snapshot，不直接依赖
 OpenAI SDK。
 
-Provider 错误直接抛出，由 Agent 记录 trace；Bus runtime 再把错误转换成用户可见的
+Provider 错误直接抛出，由 Agent 记录 trace；Bus 路径下再由 AgentLoop 转成用户可见的
 outbound error。
 
 ## Tools 和权限
@@ -410,7 +427,7 @@ channels:
 - `xagent agent` / `xagent gateway` 命令结构。
 - `xagent gateway` 可启动已启用的 channel；未启用 channel 时返回配置提示。
 - CLI 默认 `cli:default` session。
-- CLI chat 走 Bus 和 AgentRuntime。
+- CLI chat 走 Bus 和 AgentLoop。
 - CLI `-m/--message` 一次性直调 Agent。
 - 用户级 config、workspace 和 session 包。
 - `messages.jsonl` / `trace.jsonl` 持久化。

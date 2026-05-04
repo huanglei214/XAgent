@@ -15,7 +15,7 @@ from xagent.session import Session, SessionStore, resolve_session_id
 
 
 @dataclass
-class AgentRuntime:
+class AgentLoop:
     config: AppConfig
     workspace_path: Path
     approver: Approver | None = None

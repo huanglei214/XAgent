@@ -6,7 +6,7 @@ from typing import Annotated
 
 import typer
 
-from xagent.agent import Agent, AgentRuntime
+from xagent.agent import Agent, AgentLoop
 from xagent.agent.permissions import Approver, CliApprover
 from xagent.agent.tools import build_default_tools
 from xagent.agent.tools.shell import ShellPolicy
@@ -102,7 +102,7 @@ def _run_agent_command(
     if message is not None:
         agent = build_agent(config=config, session=session)
         return asyncio.run(_run_once(agent, message))
-    runtime = AgentRuntime(config=config, workspace_path=workspace_path)
+    runtime = AgentLoop(config=config, workspace_path=workspace_path)
     return _chat(
         runtime,
         session.session_id,
@@ -120,7 +120,7 @@ async def _run_once(agent: Agent, message: str) -> int:
 
 
 def _chat(
-    runtime: AgentRuntime,
+    runtime: AgentLoop,
     session_id: str,
     *,
     channel: str,

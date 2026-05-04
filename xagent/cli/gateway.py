@@ -4,7 +4,7 @@ import asyncio
 
 import typer
 
-from xagent.agent import AgentRuntime
+from xagent.agent import AgentLoop
 from xagent.bus import MessageBus
 from xagent.channels import ChannelManager, build_channels
 from xagent.cli.workspace import resolve_workspace_path
@@ -31,7 +31,7 @@ def _gateway() -> int:
             "No channels enabled. Enable channels.lark.enabled in ~/.xagent/config.yaml."
         )
         return 1
-    runtime = AgentRuntime(config=config, workspace_path=workspace_path)
+    runtime = AgentLoop(config=config, workspace_path=workspace_path)
     manager = ChannelManager(bus=bus, channels=channels)
     typer.echo("xagent gateway started.")
     return asyncio.run(_run_gateway(runtime=runtime, manager=manager, bus=bus))
@@ -39,7 +39,7 @@ def _gateway() -> int:
 
 async def _run_gateway(
     *,
-    runtime: AgentRuntime,
+    runtime: AgentLoop,
     manager: ChannelManager,
     bus: MessageBus,
 ) -> int:

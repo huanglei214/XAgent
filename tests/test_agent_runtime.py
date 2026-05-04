@@ -31,7 +31,7 @@ def text_response(text: str) -> list[ModelEvent]:
     return [ModelEvent.text_delta(text), ModelEvent.message_done()]
 
 
-def make_runtime(tmp_path, monkeypatch, scripts: list[list[ModelEvent]]):
+def make_loop(tmp_path, monkeypatch, scripts: list[list[ModelEvent]]):
     config = default_config()
     config.workspace.sessions_path = str(tmp_path / "sessions")
     workspace = tmp_path / "workspace"
@@ -46,7 +46,7 @@ def make_runtime(tmp_path, monkeypatch, scripts: list[list[ModelEvent]]):
     )
     monkeypatch.setattr(runtime_module, "make_provider", lambda config: snapshot)
     return (
-        runtime_module.AgentRuntime(
+        runtime_module.AgentLoop(
             config=config,
             workspace_path=workspace,
             approver=SessionApprover(default_allow=True),
@@ -56,13 +56,13 @@ def make_runtime(tmp_path, monkeypatch, scripts: list[list[ModelEvent]]):
 
 
 @pytest.mark.asyncio
-async def test_runtime_dispatches_inbound_to_outbound(tmp_path, monkeypatch) -> None:
-    runtime, provider = make_runtime(tmp_path, monkeypatch, [text_response("hello")])
+async def test_agent_loop_dispatches_inbound_to_outbound(tmp_path, monkeypatch) -> None:
+    agent_loop, provider = make_loop(tmp_path, monkeypatch, [text_response("hello")])
     bus = MessageBus()
     inbound = InboundMessage(content="hi", channel="test", chat_id="room", sender_id="alice")
 
     await bus.publish_inbound(inbound)
-    await runtime.dispatch_once(bus)
+    await agent_loop.dispatch_once(bus)
 
     delta = await bus.consume_outbound()
     final = await bus.consume_outbound()
@@ -85,13 +85,13 @@ async def test_runtime_dispatches_inbound_to_outbound(tmp_path, monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_runtime_publishes_agent_errors(tmp_path, monkeypatch) -> None:
-    runtime, _provider = make_runtime(tmp_path, monkeypatch, [])
+async def test_agent_loop_publishes_agent_errors(tmp_path, monkeypatch) -> None:
+    agent_loop, _provider = make_loop(tmp_path, monkeypatch, [])
     bus = MessageBus()
     inbound = InboundMessage(content="hi", channel="test", chat_id="room", sender_id="alice")
 
     await bus.publish_inbound(inbound)
-    await runtime.dispatch_once(bus)
+    await agent_loop.dispatch_once(bus)
 
     event = await bus.consume_outbound()
     assert event.stream is not None
@@ -105,8 +105,8 @@ async def test_runtime_publishes_agent_errors(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_reuses_session_for_same_channel_chat_id(tmp_path, monkeypatch) -> None:
-    runtime, provider = make_runtime(
+async def test_agent_loop_reuses_session_for_same_channel_chat_id(tmp_path, monkeypatch) -> None:
+    agent_loop, provider = make_loop(
         tmp_path,
         monkeypatch,
         [text_response("one"), text_response("two")],
@@ -116,14 +116,14 @@ async def test_runtime_reuses_session_for_same_channel_chat_id(tmp_path, monkeyp
     await bus.publish_inbound(
         InboundMessage(content="first", channel="test", chat_id="room", sender_id="alice")
     )
-    await runtime.dispatch_once(bus)
+    await agent_loop.dispatch_once(bus)
     await bus.consume_outbound()
     first_final = await bus.consume_outbound()
 
     await bus.publish_inbound(
         InboundMessage(content="second", channel="test", chat_id="room", sender_id="bob")
     )
-    await runtime.dispatch_once(bus)
+    await agent_loop.dispatch_once(bus)
     await bus.consume_outbound()
     second_final = await bus.consume_outbound()
 
@@ -135,8 +135,8 @@ async def test_runtime_reuses_session_for_same_channel_chat_id(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_runtime_prefers_explicit_session_id(tmp_path, monkeypatch) -> None:
-    runtime, _provider = make_runtime(tmp_path, monkeypatch, [text_response("hello")])
+async def test_agent_loop_prefers_explicit_session_id(tmp_path, monkeypatch) -> None:
+    agent_loop, _provider = make_loop(tmp_path, monkeypatch, [text_response("hello")])
     bus = MessageBus()
     inbound = InboundMessage(
         content="hi",
@@ -146,7 +146,7 @@ async def test_runtime_prefers_explicit_session_id(tmp_path, monkeypatch) -> Non
     )
 
     await bus.publish_inbound(inbound)
-    await runtime.dispatch_once(bus)
+    await agent_loop.dispatch_once(bus)
 
     await bus.consume_outbound()
     final = await bus.consume_outbound()
@@ -154,12 +154,12 @@ async def test_runtime_prefers_explicit_session_id(tmp_path, monkeypatch) -> Non
     assert (tmp_path / "sessions" / "manual:session").is_dir()
 
 
-def test_runtime_builds_agent_with_shell_policy_config(tmp_path, monkeypatch) -> None:
-    runtime, _provider = make_runtime(tmp_path, monkeypatch, [text_response("hello")])
-    runtime.config.permissions.shell.default = "deny"
-    runtime.config.permissions.shell.blacklist = ["sudo"]
+def test_agent_loop_builds_agent_with_shell_policy_config(tmp_path, monkeypatch) -> None:
+    agent_loop, _provider = make_loop(tmp_path, monkeypatch, [text_response("hello")])
+    agent_loop.config.permissions.shell.default = "deny"
+    agent_loop.config.permissions.shell.blacklist = ["sudo"]
 
-    agent = runtime.agent_for(
+    agent = agent_loop.agent_for(
         InboundMessage(content="hi", channel="test", chat_id="room", sender_id="alice")
     )
     shell = agent.tools.get("shell")
@@ -169,11 +169,11 @@ def test_runtime_builds_agent_with_shell_policy_config(tmp_path, monkeypatch) ->
     assert getattr(shell, "shell_policy").blacklist == ("sudo",)
 
 
-def test_runtime_builds_agent_with_web_tools_config(tmp_path, monkeypatch) -> None:
-    runtime, _provider = make_runtime(tmp_path, monkeypatch, [text_response("hello")])
-    runtime.config.tools.web.enabled = False
+def test_agent_loop_builds_agent_with_web_tools_config(tmp_path, monkeypatch) -> None:
+    agent_loop, _provider = make_loop(tmp_path, monkeypatch, [text_response("hello")])
+    agent_loop.config.tools.web.enabled = False
 
-    agent = runtime.agent_for(
+    agent = agent_loop.agent_for(
         InboundMessage(content="hi", channel="test", chat_id="room", sender_id="alice")
     )
 
@@ -181,11 +181,11 @@ def test_runtime_builds_agent_with_web_tools_config(tmp_path, monkeypatch) -> No
     assert agent.tools.get("web_search") is None
 
 
-def test_runtime_builds_agent_with_web_permission_config(tmp_path, monkeypatch) -> None:
-    runtime, _provider = make_runtime(tmp_path, monkeypatch, [text_response("hello")])
-    runtime.config.permissions.web.default = "deny"
+def test_agent_loop_builds_agent_with_web_permission_config(tmp_path, monkeypatch) -> None:
+    agent_loop, _provider = make_loop(tmp_path, monkeypatch, [text_response("hello")])
+    agent_loop.config.permissions.web.default = "deny"
 
-    agent = runtime.agent_for(
+    agent = agent_loop.agent_for(
         InboundMessage(content="hi", channel="test", chat_id="room", sender_id="alice")
     )
     web_search = agent.tools.get("web_search")
@@ -194,7 +194,7 @@ def test_runtime_builds_agent_with_web_permission_config(tmp_path, monkeypatch) 
     assert getattr(web_search, "web_permission").default == "deny"
 
 
-def test_runtime_session_for_uses_session_store_open_for_chat(tmp_path, monkeypatch) -> None:
+def test_agent_loop_session_for_uses_session_store_open_for_chat(tmp_path, monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
     class TrackingSessionStore(SessionStore):
@@ -207,13 +207,13 @@ def test_runtime_session_for_uses_session_store_open_for_chat(tmp_path, monkeypa
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     monkeypatch.setattr(runtime_module, "SessionStore", TrackingSessionStore)
-    runtime = runtime_module.AgentRuntime(
+    agent_loop = runtime_module.AgentLoop(
         config=config,
         workspace_path=workspace,
         approver=SessionApprover(default_allow=True),
     )
 
-    session = runtime.session_for(
+    session = agent_loop.session_for(
         InboundMessage(
             content="hi",
             channel="test",
@@ -235,14 +235,14 @@ def test_runtime_session_for_uses_session_store_open_for_chat(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_runtime_run_continuously_consumes_inbound(tmp_path, monkeypatch) -> None:
-    runtime, _provider = make_runtime(
+async def test_agent_loop_run_continuously_consumes_inbound(tmp_path, monkeypatch) -> None:
+    agent_loop, _provider = make_loop(
         tmp_path,
         monkeypatch,
         [text_response("one"), text_response("two")],
     )
     bus = MessageBus()
-    task = asyncio.create_task(runtime.run(bus))
+    task = asyncio.create_task(agent_loop.run(bus))
 
     await bus.publish_inbound(
         InboundMessage(content="first", channel="test", chat_id="room", sender_id="alice")
