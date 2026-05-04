@@ -342,3 +342,26 @@ def test_build_agent_uses_shell_policy_config(tmp_path) -> None:
     assert shell is not None
     assert getattr(shell, "shell_policy").default == "deny"
     assert getattr(shell, "shell_policy").blacklist == ("sudo",)
+
+
+def test_build_agent_uses_web_tools_config(tmp_path) -> None:
+    config = default_config()
+    config.tools.web.enabled = False
+    session = SessionStore(tmp_path / "sessions").create(workspace_path=tmp_path)
+
+    agent = build_agent(config=config, session=session)
+
+    assert agent.tools.get("web_fetch") is None
+    assert agent.tools.get("web_search") is None
+
+
+def test_build_agent_uses_web_permission_config(tmp_path) -> None:
+    config = default_config()
+    config.permissions.web.default = "deny"
+    session = SessionStore(tmp_path / "sessions").create(workspace_path=tmp_path)
+
+    agent = build_agent(config=config, session=session)
+    web_fetch = agent.tools.get("web_fetch")
+
+    assert web_fetch is not None
+    assert getattr(web_fetch, "web_permission").default == "deny"

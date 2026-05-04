@@ -283,13 +283,15 @@ approver 协作完成。
 - `exclusive`
 
 只读且非独占工具可以并行。写文件、shell、外部网络/API 默认串行或独占。
-`read_file` / `search` 默认允许；`apply_patch` 和 `http_request` 继续走权限确认。
-`shell` 默认允许普通命令，但会先经过黑名单策略，命中规则时直接作为 tool error 返回，
-不会再请求用户授权覆盖。
+`read_file` / `search` 默认允许；`apply_patch` 继续走写文件权限确认。`web_fetch` /
+`web_search` 通过 `permissions.web` 控制，第一版默认允许公开网页查询并写入 trace。
+`permissions.network_default` 保留给更高风险的通用网络/API 能力。`shell` 默认允许普通命令，
+但会先经过黑名单策略，命中规则时直接作为 tool error 返回，不会再请求用户授权覆盖。
 
 Shell 黑名单使用 `shlex` 做词法切分。规则可以是单 token，例如 `rm`、`sudo`，也可以是连续
 token 序列，例如 `npm install`、`uv pip install`。这只是第一版安全下限，不承诺覆盖所有
-shell 方言或间接执行风险。
+shell 方言或间接执行风险。`curl` / `wget` 继续保留在黑名单里，避免 shell 绕过 web tools
+的权限和 trace 边界。
 
 首批内置工具方向包括：
 
@@ -298,7 +300,14 @@ shell 方言或间接执行风险。
 - 补丁式编辑
 - 执行命令
 - 询问用户
-- 基础 HTTP/API 调用
+- Web URL 读取
+- Web 搜索
+
+第一版不提供低层 `http_request` / 通用 API POST/PUT 工具。已知 URL 使用 `web_fetch`；
+未知公开信息先使用 `web_search`，再对具体 URL 使用 `web_fetch`。`web_fetch` 先走 Jina
+Reader，失败后用受限 direct GET 兜底。direct GET 只支持 `http/https` 的 `GET`，使用基础
+浏览器请求头并读取文本、JSON 和 HTML 正文；不执行 JavaScript，不处理二进制附件，也不等价于
+通用 HTTP/API 工具。
 
 ## Trace 和 Memory
 
@@ -347,6 +356,8 @@ providers:
     timeout_seconds: 120
 
 permissions:
+  web:
+    default: "allow"
   shell:
     default: "allow"
     blacklist:
@@ -356,6 +367,22 @@ permissions:
       - "npm install"
       - "uv pip install"
       - ">"
+
+tools:
+  web:
+    enabled: true
+    fetch_backend: "jina"
+    search_backend: "auto"
+    timeout_seconds: 30
+    max_fetch_chars: 20000
+    max_search_results: 5
+    jina:
+      api_key: null
+      reader_base_url: "https://r.jina.ai"
+    tavily:
+      api_key: null
+    duckduckgo:
+      enabled: true
 
 channels:
   lark:

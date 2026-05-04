@@ -101,6 +101,13 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `shell` 默认允许普通命令，但会先经过 `permissions.shell.blacklist`；命中黑名单时直接返回
   tool error，不再请求授权覆盖。
 - `permissions.shell.default` 支持 `allow` / `ask` / `deny`，第一版默认是 `allow`。
+- `curl` / `wget` 继续保留在 shell 黑名单里，不用 shell 网络命令绕过 web tools。
+- `web_fetch` / `web_search` 由 `tools.web.enabled` 控制；已知 URL 用 `web_fetch`，
+  未知公开信息先 `web_search` 再按需 `web_fetch`。
+- `web_fetch` / `web_search` 由 `permissions.web.default` 控制风险确认，第一版默认是 `allow`。
+- `web_fetch` 先走 Jina Reader；Jina 失败后用受限 direct GET 兜底，只读取 `http/https`
+  的文本、JSON 和 HTML，不执行 JavaScript，也不提供通用 HTTP/API 能力。
+- 不提供低层 `http_request` 工具；第一版 web 能力只面向网页读取和搜索。
 
 ## 测试和质量门禁
 

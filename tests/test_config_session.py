@@ -7,6 +7,8 @@ import pytest
 from xagent.config import (
     DEFAULT_SHELL_BLACKLIST,
     LarkChannelConfig,
+    WebPermissionConfig,
+    WebToolsConfig,
     ensure_config,
     load_config,
     xagent_home,
@@ -35,16 +37,27 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert config.trace.model_events is False
     assert config.permissions.shell.default == "allow"
     assert config.permissions.shell.blacklist == list(DEFAULT_SHELL_BLACKLIST)
+    assert config.permissions.web.default == "allow"
+    assert config.tools.web.enabled is True
+    assert config.tools.web.fetch_backend == "jina"
+    assert config.tools.web.search_backend == "auto"
+    assert config.tools.web.jina.api_key is None
+    assert config.tools.web.tavily.api_key is None
+    assert config.tools.web.duckduckgo.enabled is True
     config_text = (tmp_path / "home" / "config.yaml").read_text(encoding="utf-8")
     assert "agents:" in config_text
     assert "providers:" in config_text
     assert "permissions:" in config_text
     assert "shell:" in config_text
+    assert "web:" in config_text
     assert "default: allow" in config_text
     assert "- rm" in config_text
     assert "command_default" not in config_text
     assert "channels:" in config_text
     assert "lark:" in config_text
+    assert "tools:" in config_text
+    assert "fetch_backend: jina" in config_text
+    assert "search_backend: auto" in config_text
     assert "raw_model_io: false" in config_text
     assert "model_events: false" in config_text
 
@@ -160,6 +173,70 @@ permissions:
 
     with pytest.raises(ValueError, match="permissions.shell.default"):
         load_config(path)
+
+
+def test_web_permission_config_loads_and_validates_default(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+permissions:
+  web:
+    default: ask
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.permissions.web.default == "ask"
+    with pytest.raises(ValueError, match="permissions.web.default"):
+        WebPermissionConfig(default="maybe")
+
+
+def test_web_tools_config_loads_explicit_values_and_ignores_root_enabled(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+tools:
+  enabled:
+    - old-global-field
+  web:
+    enabled: false
+    fetch_backend: jina
+    search_backend: duckduckgo
+    timeout_seconds: 12
+    max_fetch_chars: 1234
+    max_search_results: 7
+    jina:
+      api_key: jina-key
+      reader_base_url: https://reader.example.test
+    tavily:
+      api_key: tavily-key
+    duckduckgo:
+      enabled: false
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.tools.web.enabled is False
+    assert config.tools.web.fetch_backend == "jina"
+    assert config.tools.web.search_backend == "duckduckgo"
+    assert config.tools.web.timeout_seconds == 12
+    assert config.tools.web.max_fetch_chars == 1234
+    assert config.tools.web.max_search_results == 7
+    assert config.tools.web.jina.api_key == "jina-key"
+    assert config.tools.web.jina.reader_base_url == "https://reader.example.test"
+    assert config.tools.web.tavily.api_key == "tavily-key"
+    assert config.tools.web.duckduckgo.enabled is False
+
+
+def test_web_tools_config_rejects_unknown_backends() -> None:
+    with pytest.raises(ValueError, match="tools.web.fetch_backend"):
+        WebToolsConfig(fetch_backend="direct")
+    with pytest.raises(ValueError, match="tools.web.search_backend"):
+        WebToolsConfig(search_backend="unknown")
 
 
 def test_session_package_writes_meta_messages_trace_and_artifacts(tmp_path) -> None:

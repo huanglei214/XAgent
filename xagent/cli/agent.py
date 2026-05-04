@@ -34,6 +34,8 @@ def build_agent(
         workspace=session.workspace_path,
         approver=active_approver,
         shell_policy=ShellPolicy.from_config(config.permissions.shell),
+        web_config=config.tools.web,
+        web_permission=config.permissions.web,
     )
     return Agent(
         provider=snapshot.provider,

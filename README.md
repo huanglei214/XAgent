@@ -98,14 +98,45 @@ providers:
 `providers.openai_compat.api_key` 直接从配置读取。如果没有配置，XAgent 会向
 OpenAI-compatible SDK client 传入 `no-key`，方便本地无鉴权 endpoint 运行。
 
+## Tools 配置
+
+Web 工具通过 `tools.web.enabled` 控制。已知 URL 使用 `web_fetch`；未知公开信息先用
+`web_search` 找候选页面，再按需用 `web_fetch` 读取具体 URL。
+
+```yaml
+tools:
+  web:
+    enabled: true
+    fetch_backend: "jina"
+    search_backend: "auto"
+    timeout_seconds: 30
+    max_fetch_chars: 20000
+    max_search_results: 5
+    jina:
+      api_key: null
+      reader_base_url: "https://r.jina.ai"
+    tavily:
+      api_key: null
+    duckduckgo:
+      enabled: true
+```
+
+`web_fetch` 默认先使用 Jina Reader，未配置 API key 时也可使用基础模式；Jina 失败后会用
+受限 direct GET 兜底。direct GET 只支持 `http/https` 的 `GET`，会使用基础浏览器请求头，
+并读取文本、JSON 和 HTML 正文；它不执行 JavaScript，也不是通用 HTTP/API 工具。
+`web_search` 在配置 Tavily API key 时优先使用 Tavily，否则使用 DuckDuckGo fallback。
+
 ## 权限和 Shell 策略
 
-只读工具 `read_file` / `search` 默认允许。`apply_patch` 和 `http_request` 继续按风险
-动作走确认。`shell` 第一版采用“默认允许 + 黑名单直接拒绝”：普通只读命令不会反复弹授权，
-命中高风险规则时也不会提供授权覆盖。
+只读工具 `read_file` / `search` 默认允许。`apply_patch` 继续按写文件风险走确认。
+`web_fetch` / `web_search` 用 `permissions.web` 控制，默认允许公开网页查询并写入 trace。
+`permissions.network_default` 保留给更高风险的通用网络/API 能力。`shell` 第一版采用“默认允许
+加黑名单直接拒绝”：普通只读命令不会反复弹授权，命中高风险规则时也不会提供授权覆盖。
 
 ```yaml
 permissions:
+  web:
+    default: "allow"  # allow | ask | deny
   shell:
     default: "allow"  # allow | ask | deny
     blacklist:
@@ -118,4 +149,5 @@ permissions:
 ```
 
 黑名单使用 `shlex` 词法切分，支持单 token 和连续 token 序列，例如 `npm install`。
+`curl` / `wget` 继续保留在黑名单里，避免 shell 绕过 web tools 的权限和 trace 边界。
 这是基础安全下限，不是完整 shell 沙箱；只读探索仍建议优先使用专门的文件工具。

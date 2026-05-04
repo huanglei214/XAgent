@@ -9,7 +9,8 @@ from xagent.agent.tools.interaction import AskUserTool
 from xagent.agent.tools.registry import ToolRegistry
 from xagent.agent.tools.search import SearchTool
 from xagent.agent.tools.shell import ShellPolicy, ShellTool
-from xagent.agent.tools.web import HttpRequestTool
+from xagent.agent.tools.web import WebFetchTool, WebSearchTool
+from xagent.config import WebPermissionConfig, WebToolsConfig
 
 
 def build_default_tools(
@@ -17,6 +18,8 @@ def build_default_tools(
     workspace: Path,
     approver: Approver,
     shell_policy: ShellPolicy | None = None,
+    web_config: WebToolsConfig | None = None,
+    web_permission: WebPermissionConfig | None = None,
     ask_user: Callable[[str], str] | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
@@ -25,5 +28,9 @@ def build_default_tools(
     registry.register(ApplyPatchTool(workspace, approver))
     registry.register(ShellTool(workspace, approver, shell_policy=shell_policy))
     registry.register(AskUserTool(ask_user or (lambda question: input(question + " "))))
-    registry.register(HttpRequestTool(approver))
+    active_web_config = web_config or WebToolsConfig()
+    active_web_permission = web_permission or WebPermissionConfig()
+    if active_web_config.enabled:
+        registry.register(WebFetchTool(approver, active_web_config, active_web_permission))
+        registry.register(WebSearchTool(approver, active_web_config, active_web_permission))
     return registry

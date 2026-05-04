@@ -169,6 +169,31 @@ def test_runtime_builds_agent_with_shell_policy_config(tmp_path, monkeypatch) ->
     assert getattr(shell, "shell_policy").blacklist == ("sudo",)
 
 
+def test_runtime_builds_agent_with_web_tools_config(tmp_path, monkeypatch) -> None:
+    runtime, _provider = make_runtime(tmp_path, monkeypatch, [text_response("hello")])
+    runtime.config.tools.web.enabled = False
+
+    agent = runtime.agent_for(
+        InboundMessage(content="hi", channel="test", chat_id="room", sender_id="alice")
+    )
+
+    assert agent.tools.get("web_fetch") is None
+    assert agent.tools.get("web_search") is None
+
+
+def test_runtime_builds_agent_with_web_permission_config(tmp_path, monkeypatch) -> None:
+    runtime, _provider = make_runtime(tmp_path, monkeypatch, [text_response("hello")])
+    runtime.config.permissions.web.default = "deny"
+
+    agent = runtime.agent_for(
+        InboundMessage(content="hi", channel="test", chat_id="room", sender_id="alice")
+    )
+    web_search = agent.tools.get("web_search")
+
+    assert web_search is not None
+    assert getattr(web_search, "web_permission").default == "deny"
+
+
 def test_runtime_session_for_uses_session_store_open_for_chat(tmp_path, monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 

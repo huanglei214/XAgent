@@ -52,6 +52,8 @@ class AgentRuntime:
                 workspace=session.workspace_path,
                 approver=self.approver or CliApprover(),
                 shell_policy=ShellPolicy.from_config(self.config.permissions.shell),
+                web_config=self.config.tools.web,
+                web_permission=self.config.permissions.web,
             )
             agent = Agent(
                 provider=snapshot.provider,

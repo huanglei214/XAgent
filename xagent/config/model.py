@@ -105,12 +105,22 @@ class ShellPermissionConfig:
 
 
 @dataclass
+class WebPermissionConfig:
+    default: str = "allow"
+
+    def __post_init__(self) -> None:
+        if self.default not in {"allow", "ask", "deny"}:
+            raise ValueError("permissions.web.default must be 'allow', 'ask', or 'deny'")
+
+
+@dataclass
 class PermissionConfig:
     remember: str = "session"
     read_default: str = "allow"
     write_default: str = "ask"
     network_default: str = "ask"
     shell: ShellPermissionConfig = field(default_factory=ShellPermissionConfig)
+    web: WebPermissionConfig = field(default_factory=WebPermissionConfig)
 
 
 @dataclass
@@ -121,8 +131,43 @@ class TraceConfig:
 
 
 @dataclass
+class JinaWebConfig:
+    api_key: str | None = None
+    reader_base_url: str = "https://r.jina.ai"
+
+
+@dataclass
+class TavilyWebConfig:
+    api_key: str | None = None
+
+
+@dataclass
+class DuckDuckGoWebConfig:
+    enabled: bool = True
+
+
+@dataclass
+class WebToolsConfig:
+    enabled: bool = True
+    fetch_backend: str = "jina"
+    search_backend: str = "auto"
+    timeout_seconds: float = 30.0
+    max_fetch_chars: int = 20_000
+    max_search_results: int = 5
+    jina: JinaWebConfig = field(default_factory=JinaWebConfig)
+    tavily: TavilyWebConfig = field(default_factory=TavilyWebConfig)
+    duckduckgo: DuckDuckGoWebConfig = field(default_factory=DuckDuckGoWebConfig)
+
+    def __post_init__(self) -> None:
+        if self.fetch_backend not in {"jina"}:
+            raise ValueError("tools.web.fetch_backend must be 'jina'")
+        if self.search_backend not in {"auto", "tavily", "duckduckgo"}:
+            raise ValueError("tools.web.search_backend must be 'auto', 'tavily', or 'duckduckgo'")
+
+
+@dataclass
 class ToolsConfig:
-    enabled: list[str] = field(default_factory=list)
+    web: WebToolsConfig = field(default_factory=WebToolsConfig)
 
 
 @dataclass
@@ -285,6 +330,39 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
     permission_values["shell"] = ShellPermissionConfig(
         **_merge_known_fields(default.permissions.shell, shell_payload)
     )
+    web_permission_payload = permissions_payload.get("web", {})
+    if not isinstance(web_permission_payload, dict):
+        web_permission_payload = {}
+    permission_values["web"] = WebPermissionConfig(
+        **_merge_known_fields(default.permissions.web, web_permission_payload)
+    )
+    tools_payload = payload.get("tools", {})
+    if not isinstance(tools_payload, dict):
+        tools_payload = {}
+    tools_values = _merge_known_fields(default.tools, tools_payload)
+    web_payload = tools_payload.get("web", {})
+    if not isinstance(web_payload, dict):
+        web_payload = {}
+    web_values = _merge_known_fields(default.tools.web, web_payload)
+    jina_payload = web_payload.get("jina", {})
+    tavily_payload = web_payload.get("tavily", {})
+    duckduckgo_payload = web_payload.get("duckduckgo", {})
+    if not isinstance(jina_payload, dict):
+        jina_payload = {}
+    if not isinstance(tavily_payload, dict):
+        tavily_payload = {}
+    if not isinstance(duckduckgo_payload, dict):
+        duckduckgo_payload = {}
+    web_values["jina"] = JinaWebConfig(
+        **_merge_known_fields(default.tools.web.jina, jina_payload)
+    )
+    web_values["tavily"] = TavilyWebConfig(
+        **_merge_known_fields(default.tools.web.tavily, tavily_payload)
+    )
+    web_values["duckduckgo"] = DuckDuckGoWebConfig(
+        **_merge_known_fields(default.tools.web.duckduckgo, duckduckgo_payload)
+    )
+    tools_values["web"] = WebToolsConfig(**web_values)
 
     return AppConfig(
         agents=AgentsConfig(
@@ -302,7 +380,7 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         ),
         permissions=PermissionConfig(**permission_values),
         trace=TraceConfig(**{**asdict(default.trace), **payload.get("trace", {})}),
-        tools=ToolsConfig(**{**asdict(default.tools), **payload.get("tools", {})}),
+        tools=ToolsConfig(**tools_values),
         limits=AgentLimitsConfig(**{**asdict(default.limits), **payload.get("limits", {})}),
         channels=ChannelsConfig(
             lark=LarkChannelConfig(**lark_values)
