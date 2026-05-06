@@ -64,7 +64,8 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `xagent agent -m/--message "..."` 执行一次性消息。
 - `xagent agent -r/--resume <id>` 恢复或创建指定 session。
 - `xagent agent -w/--workspace <path>` 指定 workspace。
-- `xagent gateway` 是外部 channel 长期运行入口；当前支持第一版 `lark` 长连接 channel。
+- `xagent channels login weixin` 用于实验性个人微信 channel 二维码登录。
+- `xagent gateway` 是外部 channel 长期运行入口；当前支持 `lark` 和实验性 `weixin` channel。
 
 ## Session 和消息约定
 
@@ -79,6 +80,8 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - 出站流式状态放在 `StreamState`，用 `StreamKind.DELTA` / `StreamKind.END` 表达增量和结束。
 - 外部平台原始消息 ID 放在 `external_message_id`，不参与 runtime 关联和路由。
 - Lark/飞书 channel 名固定为 `lark`；私聊全部响应，群聊默认只响应 @ 机器人的文本消息。
+- Weixin/个人微信 channel 名固定为 `weixin`；第一版只支持私聊文本，默认 session 是
+  `weixin:<from_user_id>`，需要先通过 `xagent channels login weixin` 保存登录态。
 - 非流式 channel 可以忽略 `DELTA`，只用 `END.content` 发送完整最终回答。
 
 ## Provider 约定

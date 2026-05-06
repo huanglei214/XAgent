@@ -272,6 +272,16 @@ def test_build_channels_includes_enabled_lark_channel() -> None:
     assert isinstance(channels["lark"], LarkChannel)
 
 
+def test_lark_channel_describe_shows_startup_summary() -> None:
+    channel = LarkChannel(
+        config=LarkChannelConfig(enabled=True, app_id="cli_test", app_secret="secret"),
+        bus=MessageBus(),
+        sdk=FakeSdk(),
+    )
+
+    assert channel.describe() == "lark domain=feishu require_mention=True streaming=False"
+
+
 def test_lark_sdk_adapter_stop_cleans_background_tasks() -> None:
     adapter = LarkSdkAdapter()
     ws_client = adapter.build_ws_client(

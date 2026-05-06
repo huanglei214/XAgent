@@ -4,5 +4,6 @@ from xagent.channels.base import BaseChannel
 from xagent.channels.factory import build_channels
 from xagent.channels.lark import LarkChannel
 from xagent.channels.manager import ChannelManager
+from xagent.channels.weixin import WeixinChannel
 
-__all__ = ["BaseChannel", "ChannelManager", "LarkChannel", "build_channels"]
+__all__ = ["BaseChannel", "ChannelManager", "LarkChannel", "WeixinChannel", "build_channels"]

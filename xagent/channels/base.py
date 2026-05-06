@@ -17,6 +17,11 @@ class BaseChannel(ABC):
     def supports_streaming(self) -> bool:
         return False
 
+    def describe(self) -> str:
+        """返回用于 gateway 启动日志的非敏感 channel 摘要。"""
+
+        return self.name
+
     @abstractmethod
     async def start(self) -> None:
         """准备 channel 资源，成功后应尽快返回。"""

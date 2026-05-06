@@ -8,6 +8,7 @@ import typer
 from typer.main import get_command
 
 from xagent.cli.agent import agent_command
+from xagent.cli.channels import channels_app
 from xagent.cli.gateway import gateway_command
 
 
@@ -20,6 +21,7 @@ app = typer.Typer(
     pretty_exceptions_enable=False,
 )
 app.command("agent")(agent_command)
+app.add_typer(channels_app, name="channels")
 app.command("gateway")(gateway_command)
 
 

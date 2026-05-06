@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 
 import typer
 
@@ -28,24 +29,34 @@ def _gateway() -> int:
     channels = build_channels(config, bus)
     if not channels:
         typer.echo(
-            "No channels enabled. Enable channels.lark.enabled in ~/.xagent/config.yaml."
+            "No channels enabled. Enable channels.lark.enabled or channels.weixin.enabled "
+            "in ~/.xagent/config.yaml."
         )
         return 1
-    runtime = AgentLoop(config=config, workspace_path=workspace_path)
+    agent_loop = AgentLoop(config=config, workspace_path=workspace_path)
     manager = ChannelManager(bus=bus, channels=channels)
     typer.echo("xagent gateway started.")
-    return asyncio.run(_run_gateway(runtime=runtime, manager=manager, bus=bus))
+    _print_channel_summary(channels)
+    return asyncio.run(_run_gateway(agent_loop=agent_loop, manager=manager, bus=bus))
+
+
+def _print_channel_summary(channels: Mapping[str, object]) -> None:
+    typer.echo("Channels:")
+    for name, channel in channels.items():
+        describe = getattr(channel, "describe", None)
+        summary = describe() if callable(describe) else name
+        typer.echo(f"  - {summary}")
 
 
 async def _run_gateway(
     *,
-    runtime: AgentLoop,
+    agent_loop: AgentLoop,
     manager: ChannelManager,
     bus: MessageBus,
 ) -> int:
     tasks = [
         asyncio.create_task(manager.run()),
-        asyncio.create_task(runtime.run(bus)),
+        asyncio.create_task(agent_loop.run(bus)),
     ]
     try:
         done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)

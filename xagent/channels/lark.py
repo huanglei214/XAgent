@@ -220,6 +220,13 @@ class LarkChannel(BaseChannel):
         self._started = False
         self._stopping = False
 
+    def describe(self) -> str:
+        return (
+            f"lark domain={self.config.domain} "
+            f"require_mention={self.config.require_mention} "
+            f"streaming={self.supports_streaming}"
+        )
+
     async def start(self) -> None:
         if self._started:
             return

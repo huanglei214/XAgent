@@ -32,13 +32,15 @@ xagent agent
 xagent agent -m "explain this workspace"
 xagent agent -r cli:experiment
 xagent agent -w /path/to/project
+xagent channels login weixin
 xagent gateway
 ```
 
 `xagent` 不带子命令时显示帮助。`xagent agent` 启动 CLI chat，并使用默认
 `cli:default` session。`xagent agent -m/--message` 会直接调用 Agent 执行一条
-一次性消息，同时仍然写入 session 包和 trace。`xagent gateway` 启动已配置的外部
-聊天 channel，目前第一版支持 `lark` 长连接。`-r/--resume` 按 session 目录名恢复会话；如果 session 不存在则新建。
+一次性消息，同时仍然写入 session 包和 trace。`xagent channels login weixin` 用于个人微信
+二维码登录。`xagent gateway` 启动已配置的外部聊天 channel，目前支持 `lark` 长连接和
+实验性的 `weixin` long-poll。`-r/--resume` 按 session 目录名恢复会话；如果 session 不存在则新建。
 `-w/--workspace` 为新建 session 指定 workspace 路径。
 
 ## Bus 和 Channels
@@ -49,7 +51,7 @@ xagent gateway
 
 入站消息携带 `channel`、`chat_id` 和 `sender_id`。出站消息通过 `channel`、
 `chat_id`、`reply_to` 和 stream state 完成路由和流式控制。`channels` 包定义
-`BaseChannel` 生命周期抽象和 manager，并提供第一版 `lark` adapter。
+`BaseChannel` 生命周期抽象和 manager，并提供第一版 `lark` / `weixin` adapter。
 
 ## Lark / 飞书 Channel
 
@@ -73,6 +75,34 @@ channels:
 第一版只处理文本消息：私聊全部响应，群聊默认只有 @ 机器人时响应，并按 `chat_id`
 发送新消息，不做原消息 thread 回复，也不做原生流式更新。开放平台侧需要启用机器人能力、
 事件订阅 `im.message.receive_v1`，并授予消息发送相关权限。
+
+## Weixin / 个人微信 Channel
+
+`weixin` 是实验性个人微信 channel，参考 nanobot 的做法，使用 ilinkai 个人微信 HTTP
+long-poll API 和二维码登录。它不是公众号、企业微信或官方微信开放平台 API；稳定性和账号风险
+不应按官方机器人能力假设。
+
+```yaml
+channels:
+  weixin:
+    enabled: false
+    allow_from: []
+    base_url: "https://ilinkai.weixin.qq.com"
+    route_tag: null
+    token: null
+    state_dir: null
+    poll_timeout_seconds: 35
+```
+
+第一版只支持私聊文本收发。`allow_from: []` 默认拒绝所有发送者；设置为 `["*"]` 可允许所有人，
+也可以填入日志或 trace 中看到的微信用户 ID。首次使用先运行：
+
+```bash
+xagent channels login weixin
+```
+
+登录成功后 token、cursor 和回复所需的 context token 默认保存在
+`~/.xagent/channels/weixin/account.json`。`xagent gateway` 只加载已保存状态，不会在长期运行入口里弹二维码。
 
 ## Provider 配置
 

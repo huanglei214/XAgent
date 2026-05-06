@@ -102,9 +102,9 @@ def _run_agent_command(
     if message is not None:
         agent = build_agent(config=config, session=session)
         return asyncio.run(_run_once(agent, message))
-    runtime = AgentLoop(config=config, workspace_path=workspace_path)
+    agent_loop = AgentLoop(config=config, workspace_path=workspace_path)
     return _chat(
-        runtime,
+        agent_loop,
         session.session_id,
         channel=DEFAULT_CLI_CHANNEL,
         chat_id=DEFAULT_CLI_CHAT_ID,
@@ -120,7 +120,7 @@ async def _run_once(agent: Agent, message: str) -> int:
 
 
 def _chat(
-    runtime: AgentLoop,
+    agent_loop: AgentLoop,
     session_id: str,
     *,
     channel: str,
@@ -150,7 +150,7 @@ def _chat(
                 session_id=session_id,
             )
             loop.run_until_complete(bus.publish_inbound(inbound))
-            loop.run_until_complete(runtime.dispatch_once(bus))
+            loop.run_until_complete(agent_loop.dispatch_once(bus))
             loop.run_until_complete(_render_outbound_once(bus))
     finally:
         _shutdown_loop(loop)

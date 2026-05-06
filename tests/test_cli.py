@@ -6,6 +6,7 @@ import pytest
 
 from xagent.bus import InboundMessage, MessageBus, OutboundEvent, StreamKind, StreamState
 from xagent.cli import agent as cli_agent
+from xagent.cli import channels as cli_channels
 from xagent.cli import gateway as cli_gateway
 from xagent.cli import main as cli_main
 from xagent.cli.agent import build_agent
@@ -30,11 +31,11 @@ def test_gateway_builds_channel_manager_and_runtime(monkeypatch, tmp_path, capsy
     config.workspace.sessions_path = str(tmp_path / "sessions")
     bus_seen: MessageBus | None = None
     channels_seen = None
-    runtime_seen = None
+    agent_loop_seen = None
     manager_seen = None
     fake_channels = {"lark": object()}
 
-    class FakeRuntime:
+    class FakeAgentLoop:
         def __init__(self, *, config, workspace_path) -> None:
             self.config = config
             self.workspace_path = workspace_path
@@ -45,16 +46,16 @@ def test_gateway_builds_channel_manager_and_runtime(monkeypatch, tmp_path, capsy
             bus_seen = bus
             channels_seen = channels
 
-    async def fake_run_gateway(*, runtime, manager, bus) -> int:
-        nonlocal runtime_seen, manager_seen
-        runtime_seen = runtime
+    async def fake_run_gateway(*, agent_loop, manager, bus) -> int:
+        nonlocal agent_loop_seen, manager_seen
+        agent_loop_seen = agent_loop
         manager_seen = manager
         assert bus is bus_seen
         return 0
 
     monkeypatch.setattr(cli_gateway, "ensure_config", lambda *, interactive: config)
     monkeypatch.setattr(cli_gateway, "build_channels", lambda config, bus: fake_channels)
-    monkeypatch.setattr(cli_gateway, "AgentLoop", FakeRuntime)
+    monkeypatch.setattr(cli_gateway, "AgentLoop", FakeAgentLoop)
     monkeypatch.setattr(cli_gateway, "ChannelManager", FakeManager)
     monkeypatch.setattr(cli_gateway, "_run_gateway", fake_run_gateway)
 
@@ -62,9 +63,11 @@ def test_gateway_builds_channel_manager_and_runtime(monkeypatch, tmp_path, capsy
     captured = capsys.readouterr()
 
     assert "xagent gateway started." in captured.out
+    assert "Channels:" in captured.out
+    assert "  - lark" in captured.out
     assert isinstance(bus_seen, MessageBus)
     assert channels_seen is fake_channels
-    assert isinstance(runtime_seen, FakeRuntime)
+    assert isinstance(agent_loop_seen, FakeAgentLoop)
     assert isinstance(manager_seen, FakeManager)
 
 
@@ -74,6 +77,7 @@ def test_root_without_args_shows_help(capsys) -> None:
 
     assert "Usage:" in captured.out
     assert "agent" in captured.out
+    assert "channels" in captured.out
     assert "gateway" in captured.out
 
 
@@ -82,6 +86,7 @@ def test_root_accepts_short_help_option(capsys) -> None:
     captured = capsys.readouterr()
 
     assert "Usage:" in captured.out
+    assert "channels" in captured.out
     assert "gateway" in captured.out
 
 
@@ -111,6 +116,43 @@ def test_agent_command_uses_message_resume_and_workspace_aliases(monkeypatch) ->
         "resume": "cli-session",
         "workspace": "/tmp/project",
     }
+
+
+def test_channels_login_weixin_invokes_channel_login(monkeypatch) -> None:
+    seen: dict[str, object] | None = None
+
+    def fake_run_channels_login(*, channel_name: str, force: bool = False) -> int:
+        nonlocal seen
+        seen = {"channel_name": channel_name, "force": force}
+        return 0
+
+    monkeypatch.setattr(cli_channels, "_run_channels_login", fake_run_channels_login)
+
+    assert cli_main.main(["channels", "login", "weixin"]) == 0
+
+    assert seen == {"channel_name": "weixin", "force": False}
+
+
+def test_channels_login_weixin_force_invokes_channel_login(monkeypatch) -> None:
+    seen: dict[str, object] | None = None
+
+    def fake_run_channels_login(*, channel_name: str, force: bool = False) -> int:
+        nonlocal seen
+        seen = {"channel_name": channel_name, "force": force}
+        return 0
+
+    monkeypatch.setattr(cli_channels, "_run_channels_login", fake_run_channels_login)
+
+    assert cli_main.main(["channels", "login", "weixin", "--force"]) == 0
+
+    assert seen == {"channel_name": "weixin", "force": True}
+
+
+def test_channels_login_unknown_channel_returns_error(capsys) -> None:
+    assert cli_channels._run_channels_login(channel_name="unknown") == 1
+
+    captured = capsys.readouterr()
+    assert "Unknown channel" in captured.out
 
 
 def test_agent_command_supports_long_option_names(monkeypatch) -> None:
@@ -272,7 +314,7 @@ async def test_render_outbound_prints_errors(capsys) -> None:
 def test_chat_uses_runtime_and_bus(monkeypatch, capsys) -> None:
     seen: InboundMessage | None = None
 
-    class FakeRuntime:
+    class FakeAgentLoop:
         async def dispatch_once(self, bus: MessageBus) -> None:
             nonlocal seen
             seen = await bus.consume_inbound()
@@ -291,7 +333,7 @@ def test_chat_uses_runtime_and_bus(monkeypatch, capsys) -> None:
 
     assert (
         cli_agent._chat(
-            FakeRuntime(),  # type: ignore[arg-type]
+            FakeAgentLoop(),  # type: ignore[arg-type]
             "cli:default",
             channel="cli",
             chat_id="default",

@@ -9,6 +9,7 @@ from xagent.config import (
     LarkChannelConfig,
     WebPermissionConfig,
     WebToolsConfig,
+    WeixinChannelConfig,
     ensure_config,
     load_config,
     xagent_home,
@@ -30,6 +31,10 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert config.channels.lark.enabled is False
     assert config.channels.lark.app_id is None
     assert config.channels.lark.app_secret is None
+    assert config.channels.weixin.enabled is False
+    assert config.channels.weixin.allow_from == []
+    assert config.channels.weixin.token is None
+    assert config.channels.weixin.poll_timeout_seconds == 35
     assert config.agents.defaults.model == "gpt-4o-mini"
     assert config.agents.defaults.provider == "openai_compat"
     assert config.providers.openai_compat.api_key is None
@@ -55,6 +60,7 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert "command_default" not in config_text
     assert "channels:" in config_text
     assert "lark:" in config_text
+    assert "weixin:" in config_text
     assert "tools:" in config_text
     assert "fetch_backend: jina" in config_text
     assert "search_backend: auto" in config_text
@@ -101,6 +107,47 @@ channels:
 def test_lark_channel_config_rejects_unknown_domain() -> None:
     with pytest.raises(ValueError, match="channels.lark.domain"):
         LarkChannelConfig(domain="unknown")
+
+
+def test_weixin_channel_config_loads_explicit_values(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+channels:
+  weixin:
+    enabled: true
+    allow_from:
+      - user_1
+    base_url: https://weixin.example.test
+    route_tag: route-a
+    token: token-a
+    state_dir: /tmp/weixin-state
+    poll_timeout_seconds: 42
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.channels.weixin == WeixinChannelConfig(
+        enabled=True,
+        allow_from=["user_1"],
+        base_url="https://weixin.example.test",
+        route_tag="route-a",
+        token="token-a",
+        state_dir="/tmp/weixin-state",
+        poll_timeout_seconds=42,
+    )
+
+
+def test_weixin_channel_config_rejects_invalid_poll_timeout() -> None:
+    with pytest.raises(ValueError, match="channels.weixin.poll_timeout_seconds"):
+        WeixinChannelConfig(poll_timeout_seconds=0)
+
+
+def test_weixin_channel_config_rejects_non_list_allow_from() -> None:
+    with pytest.raises(ValueError, match="channels.weixin.allow_from"):
+        WeixinChannelConfig(allow_from="user_1")  # type: ignore[arg-type]
 
 
 def test_lark_channel_config_ignores_removed_env_fields(tmp_path) -> None:

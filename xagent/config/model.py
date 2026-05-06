@@ -197,8 +197,27 @@ class LarkChannelConfig:
 
 
 @dataclass
+class WeixinChannelConfig:
+    enabled: bool = False
+    allow_from: list[str] = field(default_factory=list)
+    base_url: str = "https://ilinkai.weixin.qq.com"
+    route_tag: str | None = None
+    token: str | None = None
+    state_dir: str | None = None
+    poll_timeout_seconds: int = 35
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.allow_from, list):
+            raise ValueError("channels.weixin.allow_from must be a list")
+        self.allow_from = [str(item) for item in self.allow_from]
+        if self.poll_timeout_seconds <= 0:
+            raise ValueError("channels.weixin.poll_timeout_seconds must be greater than 0")
+
+
+@dataclass
 class ChannelsConfig:
     lark: LarkChannelConfig = field(default_factory=LarkChannelConfig)
+    weixin: WeixinChannelConfig = field(default_factory=WeixinChannelConfig)
 
 
 @dataclass
@@ -320,6 +339,18 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         **lark_defaults,
         **{key: value for key, value in lark_payload.items() if key in lark_defaults},
     }
+    weixin_payload = (
+        channels_payload.get("weixin", {})
+        if isinstance(channels_payload, dict)
+        else {}
+    )
+    if not isinstance(weixin_payload, dict):
+        weixin_payload = {}
+    weixin_defaults = asdict(default.channels.weixin)
+    weixin_values = {
+        **weixin_defaults,
+        **{key: value for key, value in weixin_payload.items() if key in weixin_defaults},
+    }
     permissions_payload = payload.get("permissions", {})
     if not isinstance(permissions_payload, dict):
         permissions_payload = {}
@@ -383,7 +414,8 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         tools=ToolsConfig(**tools_values),
         limits=AgentLimitsConfig(**{**asdict(default.limits), **payload.get("limits", {})}),
         channels=ChannelsConfig(
-            lark=LarkChannelConfig(**lark_values)
+            lark=LarkChannelConfig(**lark_values),
+            weixin=WeixinChannelConfig(**weixin_values),
         ),
     )
 
