@@ -36,7 +36,7 @@ where = ["."]
 include = ["xagent*"]
 
 [tool.setuptools.package-data]
-xagent = ["prompts/*.md"]
+xagent = ["templates/prompts/*.md", "templates/memory/*.md"]
 
 [tool.ruff]
 line-length = 100

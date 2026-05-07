@@ -19,7 +19,7 @@ class PromptRenderer:
 
 def _default_environment() -> Environment:
     return Environment(
-        loader=PackageLoader("xagent", "prompts"),
+        loader=PackageLoader("xagent", "templates/prompts"),
         autoescape=select_autoescape(disabled_extensions=("md",)),
         undefined=StrictUndefined,
         trim_blocks=True,

@@ -45,6 +45,11 @@ def test_prompt_renderer_loads_builtin_markdown_templates() -> None:
     assert "<must_include>" in summary
     assert "<summary_style>" in summary
     assert "<dream_goal>" in dream
+    assert '"operations"' in dream
+    assert "个人信息" in dream
+    assert "生日" in dream
+    assert "不要输出 Markdown 代码块" in dream
+    assert "完整 memory 文件" in dream
     assert empty_retry == "Your previous response was empty. Provide a final answer."
 
 
@@ -61,7 +66,7 @@ def test_prompt_renderer_uses_strict_undefined() -> None:
 
 
 def test_builtin_prompt_markdown_files_are_package_resources() -> None:
-    prompt_dir = files("xagent").joinpath("prompts")
+    prompt_dir = files("xagent").joinpath("templates", "prompts")
 
     assert prompt_dir.joinpath("system.md").is_file()
     assert prompt_dir.joinpath("summary.md").is_file()

@@ -30,7 +30,7 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `xagent/cli/` 放 Typer CLI：`main.py` 只保留 root app 和 console script 入口，
   `agent.py` / `gateway.py` 分别放同名子命令逻辑，`workspace.py` 放共享 workspace 路径解析。
 - `xagent/config/` 放用户级配置读取、默认值和解析逻辑。
-- `xagent/prompts/` 只放内置 Markdown prompt 模板文件。
+- `xagent/templates/prompts/` 放模型 prompt 模板，`xagent/templates/memory/` 放 memory 初始化模板。
 - `xagent/agent/tools/` 使用平铺模块组织：`base.py` / `registry.py` 是机制层，
   `files.py` / `search.py` / `shell.py` / `web.py` / `interaction.py` 是具体能力，
   `default_tools.py` 只做默认工具注册装配。
@@ -97,14 +97,17 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - 当前只支持 `openai_compat` backend。
 - Provider 错误直接抛出，由 Agent 记录 trace，或由 AgentLoop 转成 outbound error。
 - 不做 prompt 模拟工具调用；provider 需要原生支持 OpenAI-style tool calling。
-- system、summary、dream、empty retry prompt 来自 `xagent/prompts/*.md`，通过 Jinja2 严格渲染。
+- system、summary、dream、empty retry prompt 来自 `xagent/templates/prompts/*.md`，通过 Jinja2 严格渲染。
 - prompt 模板可以使用浅层 XML 风格标签分区；标签只作为结构约定，不做 parser 校验。
 
 ## Memory 约定
 
 - 长期 memory 使用 Markdown，位于 `~/.xagent/memory`。
-- `user.md` 记录用户长期偏好；`soul.md` 记录 Agent 沟通方式；workspace 级 `memory.md`
+- 新 memory 文件从 `xagent/templates/memory/*.md` 初始化；已有 memory 文件不会被覆盖或补齐。
+- `user.md` 记录用户个人信息和长期偏好；`soul.md` 记录 Agent 沟通方式；workspace 级 `memory.md`
   记录当前 workspace 的长期事实、架构决策、约定、已完成事项和待处理事项。
+- 用户明确提供的生日、姓名、常用称呼、所在地、时区等稳定个人事实应写入 `user.md` 的
+  `个人信息` 分区，不要写入 workspace memory。
 - workspace memory 目录使用 `<workspace-name>-<path-hash>` 隔离多个 workspace，并用
   `meta.json` 记录真实 workspace path。
 - Agent 构造 system prompt 时注入 `<memory><soul>`、`<user>`、`<workspace>` 分区。
@@ -112,7 +115,9 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
   `messages.jsonl` 只保存原始消息，不再写新的 summary 记录。
 - `/dream` 只消费 `dream_state.json` 之后的新 `summary.jsonl`，不读取尚未 compact 的新消息。
 - `/dream --compact` 先强制 compact 当前 session，再执行 dream。
-- `/dream` 第一版只更新 workspace `memory.md`，不自动修改 `user.md` 或 `soul.md`。
+- `/dream` 让模型输出 JSON operations，再由程序应用到 workspace `memory.md`、`user.md`
+  和 `soul.md`。
+- dream 只支持 `append` / `update` / `delete`；`update/delete` 必须精确匹配旧 memory 中的完整条目。
 - dream 细节通过 `trace.jsonl` 审计；没有新 summary 不算错误。
 
 ## Tools 约定
