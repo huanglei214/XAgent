@@ -36,9 +36,10 @@ def test_gateway_builds_channel_manager_and_runtime(monkeypatch, tmp_path, capsy
     fake_channels = {"lark": object()}
 
     class FakeAgentLoop:
-        def __init__(self, *, config, workspace_path) -> None:
+        def __init__(self, *, config, workspace_path, memory_store=None) -> None:
             self.config = config
             self.workspace_path = workspace_path
+            self.memory_store = memory_store
 
     class FakeManager:
         def __init__(self, *, bus, channels) -> None:
@@ -309,6 +310,22 @@ async def test_render_outbound_prints_errors(capsys) -> None:
 
     captured = capsys.readouterr()
     assert captured.err == "\nError: boom\n"
+
+
+@pytest.mark.asyncio
+async def test_render_outbound_drains_command_messages(capsys) -> None:
+    bus = MessageBus()
+    await bus.publish_outbound(
+        OutboundEvent(content="dreaming...", stream=StreamState(kind=StreamKind.END, stream_id="s1"))
+    )
+    await bus.publish_outbound(
+        OutboundEvent(content="dream done.", stream=StreamState(kind=StreamKind.END, stream_id="s2"))
+    )
+
+    await cli_agent._render_outbound_once(bus)
+
+    captured = capsys.readouterr()
+    assert captured.out == "dreaming...\ndream done.\n"
 
 
 def test_chat_uses_runtime_and_bus(monkeypatch, capsys) -> None:

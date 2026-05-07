@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from importlib.resources import files
+from pathlib import Path
 
 import pytest
 from jinja2 import DictLoader, Environment, StrictUndefined
 from jinja2.exceptions import UndefinedError
 
 from xagent.agent.prompts import PromptRenderer
+from xagent.agent.memory import MemoryBundle
 
 
 def test_prompt_renderer_loads_builtin_markdown_templates() -> None:
@@ -18,9 +20,11 @@ def test_prompt_renderer_loads_builtin_markdown_templates() -> None:
         workspace_path="/tmp/workspace",
         session_id="cli:default",
         model="test-model",
+        memory=MemoryBundle.empty(Path("/tmp/workspace")),
     )
     summary = renderer.render("summary.md")
     empty_retry = renderer.render("empty_retry.md")
+    dream = renderer.render("dream.md")
 
     assert "XAgent" in system
     assert "/tmp/workspace" in system
@@ -29,6 +33,10 @@ def test_prompt_renderer_loads_builtin_markdown_templates() -> None:
     assert "<identity>" in system
     assert "</identity>" in system
     assert "<runtime_context>" in system
+    assert "<memory>" in system
+    assert "<soul>" in system
+    assert "<user>" in system
+    assert "<workspace>" in system
     assert "<workspace_rules>" in system
     assert "<tool_use>" in system
     assert "<communication>" in system
@@ -36,6 +44,7 @@ def test_prompt_renderer_loads_builtin_markdown_templates() -> None:
     assert "<summary_goal>" in summary
     assert "<must_include>" in summary
     assert "<summary_style>" in summary
+    assert "<dream_goal>" in dream
     assert empty_retry == "Your previous response was empty. Provide a final answer."
 
 
@@ -57,3 +66,4 @@ def test_builtin_prompt_markdown_files_are_package_resources() -> None:
     assert prompt_dir.joinpath("system.md").is_file()
     assert prompt_dir.joinpath("summary.md").is_file()
     assert prompt_dir.joinpath("empty_retry.md").is_file()
+    assert prompt_dir.joinpath("dream.md").is_file()

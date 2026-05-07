@@ -23,7 +23,7 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 
 - 源码包位于根目录 `xagent/`，不要重新引入 `src/` 目录。
 - `xagent/agent/` 放 `AgentLoop`、session-bound `Agent`、`AgentRunner`、工具、记忆和技能相关能力。
-- `xagent/session/` 管 session 包、`messages.jsonl` 和 `trace.jsonl`。
+- `xagent/session/` 管 session 包、`messages.jsonl`、`summary.jsonl`、`session_state.json` 和 `trace.jsonl`。
 - `xagent/bus/` 是进程内消息邮局，只做 inbound/outbound 路由。
 - `xagent/channels/` 放外部消息源抽象；CLI 不放在这个包里。
 - `xagent/providers/` 放模型 provider 适配层。
@@ -38,13 +38,13 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 ## 架构边界
 
 - 三层运行边界是 `AgentLoop -> Agent -> AgentRunner`。
-- `AgentLoop` 负责消费 Bus inbound、按 session 复用 Agent、发布 outbound，不处理 prompt 和工具细节。
-- `Agent` 绑定单个 session，负责用户消息写入、上下文构造、summary 压缩和 session trace/message 持久化。
+- `AgentLoop` 负责消费 Bus inbound、按 session 复用 Agent、截断 slash command、发布 outbound，不处理 prompt 和工具细节。
+- `Agent` 绑定单个 session，负责用户消息写入、memory 注入、上下文构造、summary 压缩和 session trace/message 持久化。
 - `AgentRunner` 是纯 ReAct 执行内核，负责 provider stream、工具调用、空回复重试和循环预算；
   不 import Session、Bus、Channel 或 PromptRenderer。
 - Agent 不应该感知消息来自 CLI、飞书、还是其他 channel。
 - Bus 是进程内邮局，不做持久化，不当事件数据库。
-- 持久化由 Session 负责，主要是 `messages.jsonl` 和 `trace.jsonl`。
+- 持久化由 Session 负责，主要是 `messages.jsonl`、`summary.jsonl`、`session_state.json` 和 `trace.jsonl`。
 - `SessionStore.open_for_chat()` 是 `channel/chat_id/session_id override` 到 session 包的统一入口；
   CLI 和 AgentLoop 都应该复用它。
 - Channel 继承 `BaseChannel`，负责外部消息源接入、消息处理和出站发送，不包含 Agent 逻辑。
@@ -55,6 +55,9 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - CLI chat 走 Bus，用来验证 channel/bus/AgentLoop 路径。
 - CLI 一次性消息 `xagent agent -m "..."` 可以直接调用 Agent，不强制走 Bus。
 - CLI 专属的 `build_agent()` 放在 `xagent/cli/agent.py`；通用 session 规则不要放回 CLI helper。
+- 会话内 slash command 在 AgentLoop 层截断，CLI、Lark 和 Weixin 都应复用同一路径。
+- `/dream` 和 `/dream --compact` 由 `xagent/agent/commands.py` 解析，具体 memory 整理由
+  `xagent/agent/memory.py` 中的 `Dream` 执行。
 
 ## CLI 约定
 
@@ -83,6 +86,8 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - Weixin/个人微信 channel 名固定为 `weixin`；第一版只支持私聊文本，默认 session 是
   `weixin:<from_user_id>`，需要先通过 `xagent channels login weixin` 保存登录态。
 - 非流式 channel 可以忽略 `DELTA`，只用 `END.content` 发送完整最终回答。
+- `/dream` 不进入 `Agent.run()`，不写普通 `messages.jsonl`；用户可见输出固定为
+  `dreaming...` 和 `dream done.`。
 
 ## Provider 约定
 
@@ -92,8 +97,23 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - 当前只支持 `openai_compat` backend。
 - Provider 错误直接抛出，由 Agent 记录 trace，或由 AgentLoop 转成 outbound error。
 - 不做 prompt 模拟工具调用；provider 需要原生支持 OpenAI-style tool calling。
-- system、summary、empty retry prompt 来自 `xagent/prompts/*.md`，通过 Jinja2 严格渲染。
+- system、summary、dream、empty retry prompt 来自 `xagent/prompts/*.md`，通过 Jinja2 严格渲染。
 - prompt 模板可以使用浅层 XML 风格标签分区；标签只作为结构约定，不做 parser 校验。
+
+## Memory 约定
+
+- 长期 memory 使用 Markdown，位于 `~/.xagent/memory`。
+- `user.md` 记录用户长期偏好；`soul.md` 记录 Agent 沟通方式；workspace 级 `memory.md`
+  记录当前 workspace 的长期事实、架构决策、约定、已完成事项和待处理事项。
+- workspace memory 目录使用 `<workspace-name>-<path-hash>` 隔离多个 workspace，并用
+  `meta.json` 记录真实 workspace path。
+- Agent 构造 system prompt 时注入 `<memory><soul>`、`<user>`、`<workspace>` 分区。
+- session compact 结果写入 `summary.jsonl`，`session_state.json` 保存 compact 游标；
+  `messages.jsonl` 只保存原始消息，不再写新的 summary 记录。
+- `/dream` 只消费 `dream_state.json` 之后的新 `summary.jsonl`，不读取尚未 compact 的新消息。
+- `/dream --compact` 先强制 compact 当前 session，再执行 dream。
+- `/dream` 第一版只更新 workspace `memory.md`，不自动修改 `user.md` 或 `soul.md`。
+- dream 细节通过 `trace.jsonl` 审计；没有新 summary 不算错误。
 
 ## Tools 约定
 

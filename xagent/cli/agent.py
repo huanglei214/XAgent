@@ -7,6 +7,7 @@ from typing import Annotated
 import typer
 
 from xagent.agent import Agent, AgentLoop
+from xagent.agent.memory import MemoryStore
 from xagent.agent.permissions import Approver, CliApprover
 from xagent.agent.tools import build_default_tools
 from xagent.agent.tools.shell import ShellPolicy
@@ -27,6 +28,7 @@ def build_agent(
     config: AppConfig,
     session: Session,
     approver: Approver | None = None,
+    memory_store: MemoryStore | None = None,
 ) -> Agent:
     snapshot = make_provider(config)
     active_approver = approver or CliApprover()
@@ -49,6 +51,10 @@ def build_agent(
         max_repeated_tool_calls=config.limits.max_repeated_tool_calls,
         context_char_threshold=config.limits.context_char_threshold,
         trace_model_events=config.trace.model_events,
+        memory_store=memory_store,
+        inject_user_memory=config.memory.inject_user,
+        inject_soul_memory=config.memory.inject_soul,
+        inject_workspace_memory=config.memory.inject_workspace,
     )
 
 
@@ -100,9 +106,17 @@ def _run_agent_command(
     print(f"Session: {session.session_id}")
     print(f"Workspace: {session.workspace_path}")
     if message is not None:
-        agent = build_agent(config=config, session=session)
+        agent = build_agent(
+            config=config,
+            session=session,
+            memory_store=MemoryStore() if config.memory.enabled else None,
+        )
         return asyncio.run(_run_once(agent, message))
-    agent_loop = AgentLoop(config=config, workspace_path=workspace_path)
+    agent_loop = AgentLoop(
+        config=config,
+        workspace_path=workspace_path,
+        memory_store=MemoryStore() if config.memory.enabled else None,
+    )
     return _chat(
         agent_loop,
         session.session_id,
@@ -184,6 +198,9 @@ async def _render_outbound_once(bus: MessageBus) -> None:
             if event.content and not printed_delta:
                 print(event.content, end="", flush=True)
             print()
+            if not bus.outbound.empty():
+                printed_delta = False
+                continue
             return
 
 

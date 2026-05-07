@@ -245,6 +245,25 @@ async def test_context_compaction_uses_summary_prompt_template(tmp_path) -> None
 
 
 @pytest.mark.asyncio
+async def test_context_compaction_retries_empty_summary(tmp_path) -> None:
+    provider = ScriptedProvider(
+        [
+            [ModelEvent.message_done({"role": "assistant", "content": ""})],
+            text_response("retried summary"),
+            text_response("final"),
+        ]
+    )
+    agent = make_agent(tmp_path, provider)
+    agent.context_char_threshold = 1
+
+    await agent.run("please summarize")
+
+    assert provider.requests[0].metadata["purpose"] == "compaction"
+    assert provider.requests[1].metadata["purpose"] == "compaction_retry"
+    assert "retried summary" in agent.session.read_summary_records()[0]["content"]
+
+
+@pytest.mark.asyncio
 async def test_repeated_tool_calls_stop_loop(tmp_path) -> None:
     provider = ScriptedProvider(
         [

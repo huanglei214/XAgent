@@ -6,6 +6,7 @@ from collections.abc import Mapping
 import typer
 
 from xagent.agent import AgentLoop
+from xagent.agent.memory import MemoryStore
 from xagent.bus import MessageBus
 from xagent.channels import ChannelManager, build_channels
 from xagent.cli.workspace import resolve_workspace_path
@@ -33,7 +34,11 @@ def _gateway() -> int:
             "in ~/.xagent/config.yaml."
         )
         return 1
-    agent_loop = AgentLoop(config=config, workspace_path=workspace_path)
+    agent_loop = AgentLoop(
+        config=config,
+        workspace_path=workspace_path,
+        memory_store=MemoryStore() if config.memory.enabled else None,
+    )
     manager = ChannelManager(bus=bus, channels=channels)
     typer.echo("xagent gateway started.")
     _print_channel_summary(channels)

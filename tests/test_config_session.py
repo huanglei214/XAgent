@@ -43,6 +43,10 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert config.permissions.shell.default == "allow"
     assert config.permissions.shell.blacklist == list(DEFAULT_SHELL_BLACKLIST)
     assert config.permissions.web.default == "allow"
+    assert config.memory.enabled is True
+    assert config.memory.inject_user is True
+    assert config.memory.inject_soul is True
+    assert config.memory.inject_workspace is True
     assert config.tools.web.enabled is True
     assert config.tools.web.fetch_backend == "jina"
     assert config.tools.web.search_backend == "auto"
@@ -62,6 +66,8 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert "lark:" in config_text
     assert "weixin:" in config_text
     assert "tools:" in config_text
+    assert "memory:" in config_text
+    assert "inject_workspace: true" in config_text
     assert "fetch_backend: jina" in config_text
     assert "search_backend: auto" in config_text
     assert "raw_model_io: false" in config_text
@@ -297,6 +303,8 @@ def test_session_package_writes_meta_messages_trace_and_artifacts(tmp_path) -> N
 
     assert session.path.name == "cli:local"
     assert session.artifacts_path.is_dir()
+    assert session.summary_path.exists()
+    assert session.session_state_path.exists()
     records = [json.loads(line) for line in session.messages_path.read_text().splitlines()]
     assert records[0]["type"] == "meta"
     assert records[0]["workspace_path"] == str(workspace.resolve())
@@ -333,6 +341,20 @@ def test_session_open_or_create_reuses_fixed_session_id(tmp_path) -> None:
     assert second.path == first.path
     assert second.workspace_path == workspace.resolve()
     assert second.read_records()[1]["message"] == {"role": "user", "content": "hello"}
+
+
+def test_session_open_existing_package_creates_missing_sidecars(tmp_path) -> None:
+    sessions = SessionStore(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = sessions.open_or_create("cli:default", workspace_path=workspace)
+    session.summary_path.unlink()
+    session.session_state_path.unlink()
+
+    reopened = sessions.open("cli:default")
+
+    assert reopened.summary_path.exists()
+    assert reopened.session_state_path.exists()
 
 
 def test_session_open_for_chat_defaults_to_channel_chat_identity(tmp_path) -> None:
@@ -380,18 +402,37 @@ def test_session_open_for_chat_explicit_session_id_wins(tmp_path) -> None:
     assert reopened.path == created.path
 
 
-def test_session_summary_becomes_model_visible_system_message(tmp_path) -> None:
+def test_session_summary_jsonl_becomes_model_visible_system_message(tmp_path) -> None:
     sessions = SessionStore(tmp_path / "sessions")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     session = sessions.create(workspace_path=workspace)
     session.append_message({"role": "user", "content": "old"})
-    session.append_summary("Important state")
+    summary = session.append_summary("Important state")
     session.append_message({"role": "user", "content": "new"})
 
     messages = session.read_model_messages()
 
+    assert summary["type"] == "summary"
+    assert summary["covers"]["messages_until_index"] == 1
+    assert [record["type"] for record in session.read_records()] == ["meta", "message", "message"]
+    assert session.read_session_state()["compact"]["latest_summary_id"] == summary["summary_id"]
     assert messages == [
         {"role": "system", "content": "Conversation summary:\nImportant state"},
+        {"role": "user", "content": "new"},
+    ]
+
+
+def test_session_compat_reads_legacy_summary_records(tmp_path) -> None:
+    sessions = SessionStore(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = sessions.create(workspace_path=workspace)
+    session.append_message({"role": "user", "content": "old"})
+    session._append_jsonl(session.messages_path, {"type": "summary", "content": "Legacy state"})
+    session.append_message({"role": "user", "content": "new"})
+
+    assert session.read_model_messages() == [
+        {"role": "system", "content": "Conversation summary:\nLegacy state"},
         {"role": "user", "content": "new"},
     ]

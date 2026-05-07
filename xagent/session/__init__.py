@@ -3,7 +3,9 @@ from xagent.session.package import (
     SessionStore,
     new_session_id,
     resolve_session_id,
+    sanitize_id,
     session_id_from_chat,
+    utc_now,
 )
 
 __all__ = [
@@ -11,5 +13,7 @@ __all__ = [
     "SessionStore",
     "new_session_id",
     "resolve_session_id",
+    "sanitize_id",
     "session_id_from_chat",
+    "utc_now",
 ]

@@ -179,6 +179,14 @@ class AgentLimitsConfig:
 
 
 @dataclass
+class MemoryConfig:
+    enabled: bool = True
+    inject_user: bool = True
+    inject_soul: bool = True
+    inject_workspace: bool = True
+
+
+@dataclass
 class LarkChannelConfig:
     enabled: bool = False
     app_id: str | None = None
@@ -229,6 +237,7 @@ class AppConfig:
     trace: TraceConfig = field(default_factory=TraceConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     limits: AgentLimitsConfig = field(default_factory=AgentLimitsConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
     channels: ChannelsConfig = field(default_factory=ChannelsConfig)
 
     @property
@@ -413,6 +422,7 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         trace=TraceConfig(**{**asdict(default.trace), **payload.get("trace", {})}),
         tools=ToolsConfig(**tools_values),
         limits=AgentLimitsConfig(**{**asdict(default.limits), **payload.get("limits", {})}),
+        memory=MemoryConfig(**{**asdict(default.memory), **payload.get("memory", {})}),
         channels=ChannelsConfig(
             lark=LarkChannelConfig(**lark_values),
             weixin=WeixinChannelConfig(**weixin_values),
