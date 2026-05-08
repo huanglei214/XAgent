@@ -402,6 +402,16 @@ def test_session_open_for_chat_explicit_session_id_wins(tmp_path) -> None:
     assert reopened.path == created.path
 
 
+def test_session_rejects_path_like_session_ids(tmp_path) -> None:
+    sessions = SessionStore(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    for session_id in {".", "..", "../outside", "nested/session", r"..\outside"}:
+        with pytest.raises(ValueError, match="Invalid session id"):
+            sessions.open_or_create(session_id, workspace_path=workspace)
+
+
 def test_session_summary_jsonl_becomes_model_visible_system_message(tmp_path) -> None:
     sessions = SessionStore(tmp_path / "sessions")
     workspace = tmp_path / "workspace"
@@ -421,6 +431,32 @@ def test_session_summary_jsonl_becomes_model_visible_system_message(tmp_path) ->
         {"role": "system", "content": "Conversation summary:\nImportant state"},
         {"role": "user", "content": "new"},
     ]
+
+
+def test_session_summary_can_retain_recent_user_turn_window(tmp_path) -> None:
+    sessions = SessionStore(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = sessions.create(workspace_path=workspace)
+    for index in range(1, 7):
+        session.append_message({"role": "user", "content": f"user {index}"})
+        session.append_message({"role": "assistant", "content": f"assistant {index}"})
+    retained_from = session.recent_user_turn_start_index(
+        session.latest_message_record_index(),
+        user_turns=4,
+    )
+    summary = session.append_summary(
+        "Important state",
+        retained_from_index=retained_from,
+    )
+
+    messages = session.read_model_messages()
+
+    assert summary["covers"]["retained_from_index"] == 5
+    assert session.read_session_state()["compact"]["retained_from_index"] == 5
+    assert messages[0] == {"role": "system", "content": "Conversation summary:\nImportant state"}
+    assert messages[1] == {"role": "user", "content": "user 3"}
+    assert messages[-1] == {"role": "assistant", "content": "assistant 6"}
 
 
 def test_session_compat_reads_legacy_summary_records(tmp_path) -> None:

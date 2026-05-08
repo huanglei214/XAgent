@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 from typing import Annotated
 
@@ -141,14 +142,33 @@ def _chat(
     chat_id: str,
     sender_id: str,
 ) -> int:
+    return asyncio.run(
+        _chat_async(
+            agent_loop,
+            session_id,
+            channel=channel,
+            chat_id=chat_id,
+            sender_id=sender_id,
+        )
+    )
+
+
+async def _chat_async(
+    agent_loop: AgentLoop,
+    session_id: str,
+    *,
+    channel: str,
+    chat_id: str,
+    sender_id: str,
+) -> int:
     bus = MessageBus()
-    loop = asyncio.new_event_loop()
     print("Type 'exit' or 'quit' to leave.")
+    agent_task = asyncio.create_task(agent_loop.run(bus))
+    render_task = asyncio.create_task(_render_outbound_loop(bus))
     try:
-        asyncio.set_event_loop(loop)
         while True:
             try:
-                text = input("> ")
+                text = await asyncio.to_thread(input, "> ")
             except EOFError:
                 print()
                 return 0
@@ -163,11 +183,15 @@ def _chat(
                 sender_id=sender_id,
                 session_id=session_id,
             )
-            loop.run_until_complete(bus.publish_inbound(inbound))
-            loop.run_until_complete(agent_loop.dispatch_once(bus))
-            loop.run_until_complete(_render_outbound_once(bus))
+            await bus.publish_inbound(inbound)
+            await asyncio.sleep(0)
     finally:
-        _shutdown_loop(loop)
+        for task in (agent_task, render_task):
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await agent_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await render_task
 
 
 def _shutdown_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -202,6 +226,11 @@ async def _render_outbound_once(bus: MessageBus) -> None:
                 printed_delta = False
                 continue
             return
+
+
+async def _render_outbound_loop(bus: MessageBus) -> None:
+    while True:
+        await _render_outbound_once(bus)
 
 
 def _print_event(event: ModelEvent) -> None:

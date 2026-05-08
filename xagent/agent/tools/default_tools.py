@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from xagent.agent.permissions import Approver
@@ -20,7 +20,7 @@ def build_default_tools(
     shell_policy: ShellPolicy | None = None,
     web_config: WebToolsConfig | None = None,
     web_permission: WebPermissionConfig | None = None,
-    ask_user: Callable[[str], str] | None = None,
+    ask_user: Callable[[str], str | Awaitable[str]] | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(ReadFileTool(workspace))

@@ -64,6 +64,12 @@ def make_agent(tmp_path: Path, provider: ScriptedProvider, registry: ToolRegistr
     )
 
 
+def seed_turns(agent: Agent, count: int) -> None:
+    for index in range(1, count + 1):
+        agent.session.append_message({"role": "user", "content": f"old user {index}"})
+        agent.session.append_message({"role": "assistant", "content": f"old assistant {index}"})
+
+
 def test_message_builder_assembles_text_and_tool_calls() -> None:
     builder = MessageBuilder()
     for event in [
@@ -230,6 +236,7 @@ async def test_context_compaction_uses_summary_prompt_template(tmp_path) -> None
         ]
     )
     agent = make_agent(tmp_path, provider)
+    seed_turns(agent, 6)
     agent.context_char_threshold = 1
 
     final = await agent.run("please summarize")
@@ -242,6 +249,15 @@ async def test_context_compaction_uses_summary_prompt_template(tmp_path) -> None
     assert "<must_include>" in compaction_prompt["content"]
     assert "<summary_style>" in compaction_prompt["content"]
     assert provider.requests[0].metadata["purpose"] == "compaction"
+    final_messages = provider.requests[1].messages
+    summary_index = next(
+        index
+        for index, message in enumerate(final_messages)
+        if message["role"] == "system" and "Conversation summary:" in message["content"]
+    )
+    assert final_messages[summary_index + 1] == {"role": "user", "content": "old user 3"}
+    assert final_messages[-1] == {"role": "user", "content": "please summarize"}
+    assert agent.session.read_session_state()["compact"]["retained_from_index"] == 5
 
 
 @pytest.mark.asyncio
@@ -254,6 +270,7 @@ async def test_context_compaction_retries_empty_summary(tmp_path) -> None:
         ]
     )
     agent = make_agent(tmp_path, provider)
+    seed_turns(agent, 1)
     agent.context_char_threshold = 1
 
     await agent.run("please summarize")

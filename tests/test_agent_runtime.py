@@ -31,6 +31,20 @@ def text_response(text: str) -> list[ModelEvent]:
     return [ModelEvent.text_delta(text), ModelEvent.message_done()]
 
 
+def tool_response(name: str, arguments: str, *, call_id: str = "call_1") -> list[ModelEvent]:
+    return [
+        ModelEvent.tool_call_delta(
+            {
+                "index": 0,
+                "id": call_id,
+                "type": "function",
+                "function": {"name": name, "arguments": arguments},
+            }
+        ),
+        ModelEvent.message_done(),
+    ]
+
+
 def make_loop(tmp_path, monkeypatch, scripts: list[list[ModelEvent]]):
     config = default_config()
     config.workspace.sessions_path = str(tmp_path / "sessions")
@@ -262,3 +276,127 @@ async def test_agent_loop_run_continuously_consumes_inbound(tmp_path, monkeypatc
 
     assert first_final.content == "one"
     assert second_final.content == "two"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_ask_user_waits_for_next_inbound_reply(tmp_path, monkeypatch) -> None:
+    agent_loop, provider = make_loop(
+        tmp_path,
+        monkeypatch,
+        [
+            tool_response("ask_user", '{"question": "Need input?"}'),
+            text_response("thanks"),
+        ],
+    )
+    bus = MessageBus()
+    task = asyncio.create_task(agent_loop.run(bus))
+
+    await bus.publish_inbound(
+        InboundMessage(content="start", channel="test", chat_id="room", sender_id="alice")
+    )
+    question = await bus.consume_outbound()
+    await bus.publish_inbound(
+        InboundMessage(content="answer text", channel="test", chat_id="room", sender_id="alice")
+    )
+    await bus.consume_outbound()
+    final = await bus.consume_outbound()
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert question.content == "Need input?"
+    assert provider.requests[1].messages[-1] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": "answer text",
+    }
+    assert final.content == "thanks"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_permission_prompt_waits_for_chat_reply(tmp_path, monkeypatch) -> None:
+    agent_loop, provider = make_loop(
+        tmp_path,
+        monkeypatch,
+        [
+            tool_response(
+                "apply_patch",
+                '{"path": "note.txt", "old": "old", "new": "new"}',
+            ),
+            text_response("updated"),
+        ],
+    )
+    agent_loop.approver = None
+    (agent_loop.workspace_path / "note.txt").write_text("old", encoding="utf-8")
+    bus = MessageBus()
+    task = asyncio.create_task(agent_loop.run(bus))
+
+    await bus.publish_inbound(
+        InboundMessage(content="patch it", channel="test", chat_id="room", sender_id="alice")
+    )
+    prompt = await bus.consume_outbound()
+    await bus.publish_inbound(
+        InboundMessage(content="允许", channel="test", chat_id="room", sender_id="alice")
+    )
+    await bus.consume_outbound()
+    final = await bus.consume_outbound()
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert "Permission required" in prompt.content
+    assert "file_write" in prompt.content
+    assert (agent_loop.workspace_path / "note.txt").read_text(encoding="utf-8") == "new"
+    assert provider.requests[1].messages[-1]["role"] == "tool"
+    assert final.content == "updated"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_processes_different_sessions_concurrently(tmp_path, monkeypatch) -> None:
+    config = default_config()
+    config.workspace.sessions_path = str(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    class DelayedProvider:
+        def __init__(self) -> None:
+            self.requests: list[ModelRequest] = []
+
+        async def stream(self, request: ModelRequest) -> AsyncIterator[ModelEvent]:
+            self.requests.append(request)
+            content = str(request.messages[-1]["content"])
+            if "slow" in content:
+                await asyncio.sleep(1)
+                yield ModelEvent.text_delta("slow")
+            else:
+                yield ModelEvent.text_delta("fast")
+            yield ModelEvent.message_done()
+
+    provider = DelayedProvider()
+    snapshot = ProviderSnapshot(
+        provider=provider,
+        model="runtime-model",
+        provider_name="openai_compat",
+        api_base=None,
+        signature=("test",),
+    )
+    monkeypatch.setattr(runtime_module, "make_provider", lambda config: snapshot)
+    agent_loop = runtime_module.AgentLoop(
+        config=config,
+        workspace_path=workspace,
+        approver=SessionApprover(default_allow=True),
+    )
+    bus = MessageBus()
+    task = asyncio.create_task(agent_loop.run(bus))
+
+    await bus.publish_inbound(InboundMessage(content="slow", channel="test", chat_id="slow"))
+    await bus.publish_inbound(InboundMessage(content="fast", channel="test", chat_id="fast"))
+
+    first_event = await asyncio.wait_for(bus.consume_outbound(), timeout=0.2)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert first_event.content == "fast"

@@ -15,7 +15,15 @@ def utc_now() -> str:
 
 def sanitize_id(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.:-]+", "-", value).strip("-:")
+    if cleaned in {".", ".."}:
+        raise ValueError(f"Invalid session id: {value!r}")
     return cleaned or uuid4().hex[:8]
+
+
+def sanitize_session_id(value: str) -> str:
+    if value in {".", ".."} or "/" in value or "\\" in value:
+        raise ValueError(f"Invalid session id: {value!r}")
+    return sanitize_id(value)
 
 
 def new_session_id(channel: str = "cli", chat_id: str | None = None) -> str:
@@ -36,7 +44,7 @@ def resolve_session_id(
     session_id: str | None = None,
 ) -> str:
     if session_id:
-        return sanitize_id(session_id)
+        return sanitize_session_id(session_id)
     return session_id_from_chat(channel, chat_id)
 
 
@@ -74,6 +82,7 @@ class Session:
         content: str,
         *,
         messages_until_index: int | None = None,
+        retained_from_index: int | None = None,
         previous_summary_id: str | None = None,
         kind: str = "context",
     ) -> dict[str, Any]:
@@ -90,19 +99,19 @@ class Session:
             "created_at": utc_now(),
             "covers": {
                 "messages_until_index": messages_until_index,
+                "retained_from_index": retained_from_index,
                 "previous_summary_id": previous_summary_id,
             },
             "content": content,
         }
         self._append_jsonl(self.summary_path, record)
-        self.write_session_state(
-            {
-                "compact": {
-                    "messages_until_index": messages_until_index,
-                    "latest_summary_id": summary_id,
-                }
-            }
-        )
+        compact_state = {
+            "messages_until_index": messages_until_index,
+            "latest_summary_id": summary_id,
+        }
+        if retained_from_index is not None:
+            compact_state["retained_from_index"] = retained_from_index
+        self.write_session_state({"compact": compact_state})
         return record
 
     def append_trace(self, kind: str, payload: dict[str, Any]) -> None:
@@ -136,12 +145,17 @@ class Session:
         compacted_until = int(state.get("messages_until_index") or 0)
         latest_summary = self.summary_by_id(str(latest_summary_id)) if latest_summary_id else None
         if latest_summary:
+            retained_from_index = state.get("retained_from_index")
+            if retained_from_index is not None:
+                tail = self.messages_from_record_index(int(retained_from_index))
+            else:
+                tail = self.messages_after_record_index(compacted_until)
             return [
                 {
                     "role": "system",
                     "content": "Conversation summary:\n" + str(latest_summary.get("content") or ""),
                 },
-                *self.messages_after_record_index(compacted_until),
+                *tail,
             ]
         return self._read_model_messages_compat()
 
@@ -189,6 +203,33 @@ class Session:
                 messages.append(record["message"])
         return messages
 
+    def messages_from_record_index(self, record_index: int) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        for idx, record in enumerate(self.read_records()):
+            if idx < record_index:
+                continue
+            if record.get("type") == "message" and isinstance(record.get("message"), dict):
+                messages.append(record["message"])
+        return messages
+
+    def recent_user_turn_start_index(self, record_index: int, *, user_turns: int) -> int | None:
+        user_indices: list[int] = []
+        for idx, record in enumerate(self.read_records()):
+            if idx > record_index:
+                break
+            message = record.get("message")
+            if (
+                record.get("type") == "message"
+                and isinstance(message, dict)
+                and message.get("role") == "user"
+            ):
+                user_indices.append(idx)
+        if not user_indices:
+            return None
+        if len(user_indices) <= user_turns:
+            return user_indices[0]
+        return user_indices[-user_turns]
+
     def summary_by_id(self, summary_id: str) -> dict[str, Any] | None:
         for record in self.read_summary_records():
             if record.get("summary_id") == summary_id:
@@ -206,7 +247,13 @@ class Session:
 
     @staticmethod
     def default_session_state() -> dict[str, Any]:
-        return {"compact": {"messages_until_index": 0, "latest_summary_id": None}}
+        return {
+            "compact": {
+                "messages_until_index": 0,
+                "latest_summary_id": None,
+                "retained_from_index": None,
+            }
+        }
 
     def ensure_sidecar_files(self) -> None:
         self.artifacts_path.mkdir(parents=True, exist_ok=True)
@@ -248,8 +295,7 @@ class SessionStore:
         return self._initialize(session_id=session_id, workspace_path=workspace_path)
 
     def open_or_create(self, session_id: str, *, workspace_path: Path) -> Session:
-        safe_session_id = sanitize_id(session_id)
-        path = self.sessions_path / safe_session_id
+        safe_session_id, path = self._session_path(session_id)
         messages_path = path / "messages.jsonl"
         if messages_path.exists():
             return self.open(safe_session_id)
@@ -277,7 +323,7 @@ class SessionStore:
         return self.open_or_create(resolved_session_id, workspace_path=workspace_path)
 
     def open(self, session_id: str) -> Session:
-        path = self.sessions_path / sanitize_id(session_id)
+        _safe_session_id, path = self._session_path(session_id)
         messages_path = path / "messages.jsonl"
         if not messages_path.exists():
             raise KeyError(session_id)
@@ -294,7 +340,7 @@ class SessionStore:
         workspace_path: Path,
         ensure_unique: bool = True,
     ) -> Session:
-        path = self.sessions_path / sanitize_id(session_id)
+        _safe_session_id, path = self._session_path(session_id)
         suffix = 1
         original = path
         while ensure_unique and path.exists():
@@ -326,3 +372,12 @@ class SessionStore:
         if not records or records[0].get("type") != "meta":
             raise ValueError(f"Session file {path} is missing a meta record")
         return records[0]
+
+    def _session_path(self, session_id: str) -> tuple[str, Path]:
+        safe_session_id = sanitize_session_id(session_id)
+        root = self.sessions_path.resolve()
+        path = self.sessions_path / safe_session_id
+        resolved = path.resolve(strict=False)
+        if resolved == root or root not in resolved.parents:
+            raise ValueError(f"Session id escapes sessions directory: {session_id!r}")
+        return safe_session_id, path

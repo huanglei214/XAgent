@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -330,23 +331,34 @@ async def test_render_outbound_drains_command_messages(capsys) -> None:
 
 def test_chat_uses_runtime_and_bus(monkeypatch, capsys) -> None:
     seen: InboundMessage | None = None
+    answered = threading.Event()
 
     class FakeAgentLoop:
-        async def dispatch_once(self, bus: MessageBus) -> None:
+        async def run(self, bus: MessageBus) -> None:
             nonlocal seen
-            seen = await bus.consume_inbound()
-            await bus.publish_outbound(
-                OutboundEvent(
-                    channel=seen.channel,
-                    chat_id=seen.chat_id,
-                    reply_to=seen.sender_id,
-                    session_id=seen.session_id,
-                    stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+            while True:
+                seen = await bus.consume_inbound()
+                await bus.publish_outbound(
+                    OutboundEvent(
+                        content="ok",
+                        channel=seen.channel,
+                        chat_id=seen.chat_id,
+                        reply_to=seen.sender_id,
+                        session_id=seen.session_id,
+                        stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+                    )
                 )
-            )
+                answered.set()
 
     inputs = iter(["hello", "exit"])
-    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+
+    def fake_input(prompt: str) -> str:
+        value = next(inputs)
+        if value == "exit":
+            answered.wait(timeout=1)
+        return value
+
+    monkeypatch.setattr("builtins.input", fake_input)
 
     assert (
         cli_agent._chat(

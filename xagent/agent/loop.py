@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -15,6 +16,8 @@ from xagent.agent.runner import (
 from xagent.agent.tools.registry import ToolRegistry
 from xagent.providers.types import ModelRequest, Provider
 from xagent.session import Session
+
+RETAINED_USER_TURNS = 4
 
 
 @dataclass
@@ -37,8 +40,9 @@ class Agent:
     inject_workspace_memory: bool = True
 
     async def run(self, user_text: str, *, on_event: EventSink | None = None) -> dict[str, Any]:
-        self.session.append_message({"role": "user", "content": user_text})
-        await self.compact()
+        user_message = {"role": "user", "content": user_text}
+        await self.compact(additional_messages=[user_message])
+        self.session.append_message(user_message)
 
         runner = AgentRunner(self.provider)
         result = await runner.run(self._build_run_spec(on_event=on_event))
@@ -71,8 +75,18 @@ class Agent:
             *self.session.read_model_messages(),
         ]
 
-    async def compact(self, *, force: bool = False) -> bool:
-        if not force and self.session.approximate_context_size() <= self.context_char_threshold:
+    async def compact(
+        self,
+        *,
+        force: bool = False,
+        additional_messages: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        context_size = self.session.approximate_context_size()
+        if additional_messages:
+            context_size += sum(
+                len(json.dumps(message, ensure_ascii=False)) for message in additional_messages
+            )
+        if not force and context_size <= self.context_char_threshold:
             return False
         messages_until_index = self.session.latest_message_record_index()
         compact_state = self.session.read_session_state().get("compact", {})
@@ -102,9 +116,14 @@ class Agent:
         if not summary:
             summary = await self._retry_compaction(messages)
         if summary:
+            retained_from_index = self.session.recent_user_turn_start_index(
+                messages_until_index,
+                user_turns=RETAINED_USER_TURNS,
+            )
             self.session.append_summary(
                 summary,
                 messages_until_index=messages_until_index,
+                retained_from_index=retained_from_index,
                 previous_summary_id=compact_state.get("latest_summary_id"),
             )
             return True
