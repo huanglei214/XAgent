@@ -196,10 +196,13 @@ class LarkChannelConfig:
     reactions_enabled: bool = True
     working_reaction: str = "OnIt"
     done_reaction: str = "DONE"
+    message_format: str = "auto"
 
     def __post_init__(self) -> None:
         if self.domain not in {"feishu", "lark"}:
             raise ValueError("channels.lark.domain must be 'feishu' or 'lark'")
+        if self.message_format not in {"auto", "text", "markdown_card"}:
+            raise ValueError("channels.lark.message_format must be 'auto', 'text', or 'markdown_card'")
 
 
 @dataclass

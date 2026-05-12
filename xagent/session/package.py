@@ -3,14 +3,25 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 
+SHANGHAI_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
+
+
+def local_now() -> str:
+    """返回 XAgent 持久化记录使用的本地时间。"""
+
+    return datetime.now(SHANGHAI_TZ).isoformat()
+
+
 def utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+    """兼容旧内部导入；新代码应使用 local_now。"""
+
+    return local_now()
 
 
 def sanitize_id(value: str) -> str:
@@ -29,7 +40,7 @@ def sanitize_session_id(value: str) -> str:
 def new_session_id(channel: str = "cli", chat_id: str | None = None) -> str:
     if chat_id:
         return session_id_from_chat(channel, chat_id)
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(SHANGHAI_TZ).strftime("%Y%m%d-%H%M%S")
     return f"{sanitize_id(channel)}-{stamp}-{uuid4().hex[:6]}"
 
 
@@ -75,7 +86,7 @@ class Session:
         return self.path / "artifacts"
 
     def append_message(self, message: dict[str, Any]) -> None:
-        self._append_jsonl(self.messages_path, {"type": "message", "at": utc_now(), "message": message})
+        self._append_jsonl(self.messages_path, {"type": "message", "at": local_now(), "message": message})
 
     def append_summary(
         self,
@@ -96,7 +107,7 @@ class Session:
             "type": "summary",
             "summary_id": summary_id,
             "kind": kind,
-            "created_at": utc_now(),
+            "created_at": local_now(),
             "covers": {
                 "messages_until_index": messages_until_index,
                 "retained_from_index": retained_from_index,
@@ -115,7 +126,7 @@ class Session:
         return record
 
     def append_trace(self, kind: str, payload: dict[str, Any]) -> None:
-        self._append_jsonl(self.trace_path, {"type": kind, "at": utc_now(), **payload})
+        self._append_jsonl(self.trace_path, {"type": kind, "at": local_now(), **payload})
 
     def read_records(self) -> list[dict[str, Any]]:
         return list(self._iter_jsonl(self.messages_path))
@@ -258,7 +269,7 @@ class Session:
     def ensure_sidecar_files(self) -> None:
         self.artifacts_path.mkdir(parents=True, exist_ok=True)
         if not self.summary_path.exists():
-            self._append_jsonl(self.summary_path, {"type": "meta", "at": utc_now()})
+            self._append_jsonl(self.summary_path, {"type": "meta", "at": local_now()})
         if not self.session_state_path.exists():
             self.write_session_state(self.default_session_state())
 
@@ -354,15 +365,15 @@ class SessionStore:
         meta = {
             "type": "meta",
             "session_id": session.session_id,
-            "created_at": utc_now(),
+            "created_at": local_now(),
             "workspace_path": str(session.workspace_path),
         }
         Session._append_jsonl(session.messages_path, meta)
         Session._append_jsonl(
             session.trace_path,
-            {"type": "meta", "at": utc_now(), "session_id": session.session_id},
+            {"type": "meta", "at": local_now(), "session_id": session.session_id},
         )
-        Session._append_jsonl(session.summary_path, {"type": "meta", "at": utc_now()})
+        Session._append_jsonl(session.summary_path, {"type": "meta", "at": local_now()})
         session.write_session_state(Session.default_session_state())
         return session
 

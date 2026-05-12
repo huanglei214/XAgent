@@ -12,7 +12,7 @@ from xagent.agent.prompts import PromptRenderer
 from xagent.agent.runner import call_model
 from xagent.config import xagent_home
 from xagent.providers import ModelRequest
-from xagent.session import sanitize_id, utc_now
+from xagent.session import local_now, sanitize_id
 
 if TYPE_CHECKING:
     from xagent.agent.loop import Agent
@@ -96,7 +96,7 @@ class MemoryStore:
                     {
                         "workspace_id": paths.workspace_id,
                         "workspace_path": str(workspace_path.resolve()),
-                        "created_at": utc_now(),
+                        "created_at": local_now(),
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -132,7 +132,7 @@ class MemoryStore:
         sessions = state.setdefault("sessions", {})
         sessions[session_id] = {
             "last_summary_id": latest_summary_id,
-            "last_dream_at": utc_now(),
+            "last_dream_at": local_now(),
         }
         self.write_dream_state(paths.workspace_id, state)
 

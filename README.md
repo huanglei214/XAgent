@@ -119,11 +119,18 @@ channels:
     strip_mention: true
     auto_reconnect: true
     log_level: "info"
+    reactions_enabled: true
+    working_reaction: "OnIt"
+    done_reaction: "DONE"
+    message_format: "auto"
 ```
 
 第一版只处理文本消息：私聊全部响应，群聊默认只有 @ 机器人时响应，并按 `chat_id`
-发送新消息，不做原消息 thread 回复，也不做原生流式更新。开放平台侧需要启用机器人能力、
-事件订阅 `im.message.receive_v1`，并授予消息发送相关权限。
+发送新消息，不做原消息 thread 回复，也不做原生流式更新。`message_format: auto`
+会把普通回复作为文本发送，把 Markdown 结构明显的回复作为飞书 interactive markdown 卡片发送。
+收到有效消息后会给原消息添加
+`OnIt` reaction，回复完成后移除 `OnIt` 并添加 `DONE` reaction；reaction 失败不会影响文本回复。
+开放平台侧需要启用机器人能力、事件订阅 `im.message.receive_v1`，并授予消息发送和消息表情回复相关权限。
 
 ## Weixin / 个人微信 Channel
 

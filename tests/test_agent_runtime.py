@@ -134,6 +134,26 @@ async def test_agent_loop_publishes_agent_errors(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_loop_command_outbound_preserves_external_message_id(tmp_path, monkeypatch) -> None:
+    agent_loop, _provider = make_loop(tmp_path, monkeypatch, [])
+    bus = MessageBus()
+    inbound = InboundMessage(
+        content="/help",
+        channel="test",
+        chat_id="room",
+        sender_id="alice",
+        external_message_id="msg_help",
+    )
+
+    await bus.publish_inbound(inbound)
+    await agent_loop.dispatch_once(bus)
+
+    event = await bus.consume_outbound()
+    assert "Available commands" in event.content
+    assert event.metadata["external_message_id"] == "msg_help"
+
+
+@pytest.mark.asyncio
 async def test_agent_loop_reuses_session_for_same_channel_chat_id(tmp_path, monkeypatch) -> None:
     agent_loop, provider = make_loop(
         tmp_path,

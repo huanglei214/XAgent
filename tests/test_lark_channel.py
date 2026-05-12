@@ -34,8 +34,10 @@ class FakeSdk:
     def __init__(self) -> None:
         self.bot_info_calls = 0
         self.sent: list[tuple[str, str]] = []
-        self.reactions: list[tuple[str, str]] = []
+        self.cards: list[tuple[str, str]] = []
+        self.reactions: list[tuple[str, str, str]] = []
         self.fail_reactions = False
+        self._reaction_index = 0
         self.ws_client = FakeWsClient()
         self.client = FakeClient()
         self.client_args: dict[str, Any] = {}
@@ -67,11 +69,24 @@ class FakeSdk:
         assert client is self.client
         self.sent.append((chat_id, text))
 
-    def add_reaction(self, client: Any, *, message_id: str, emoji_type: str) -> None:
+    def send_markdown_card(self, client: Any, *, chat_id: str, markdown: str) -> None:
+        assert client is self.client
+        self.cards.append((chat_id, markdown))
+
+    def add_reaction(self, client: Any, *, message_id: str, emoji_type: str) -> str:
         assert client is self.client
         if self.fail_reactions:
             raise RuntimeError("reaction failed")
-        self.reactions.append((message_id, emoji_type))
+        self._reaction_index += 1
+        reaction_id = f"reaction_{self._reaction_index}"
+        self.reactions.append(("add", message_id, emoji_type))
+        return reaction_id
+
+    def delete_reaction(self, client: Any, *, message_id: str, reaction_id: str) -> None:
+        assert client is self.client
+        if self.fail_reactions:
+            raise RuntimeError("reaction failed")
+        self.reactions.append(("delete", message_id, reaction_id))
 
 
 def make_event(
@@ -172,7 +187,7 @@ async def test_lark_private_text_message_publishes_inbound() -> None:
     assert inbound.sender_id == "ou_user"
     assert inbound.external_message_id == "om_message"
     assert inbound.metadata["chat_type"] == "p2p"
-    assert sdk.reactions == [("om_message", "OnIt")]
+    assert sdk.reactions == [("add", "om_message", "OnIt")]
 
 
 @pytest.mark.asyncio
@@ -188,7 +203,7 @@ async def test_lark_group_mention_publishes_inbound_and_strips_mention() -> None
     assert received == inbound
     assert inbound.content == "继续"
     assert inbound.chat_id == "oc_room"
-    assert sdk.reactions == [("om_message", "OnIt")]
+    assert sdk.reactions == [("add", "om_message", "OnIt")]
 
 
 @pytest.mark.asyncio
@@ -240,7 +255,7 @@ async def test_lark_send_ignores_delta_and_sends_end() -> None:
     )
 
     assert sdk.sent == [("oc_room", "hello")]
-    assert sdk.reactions == [("om_message", "DONE")]
+    assert sdk.reactions == [("add", "om_message", "DONE")]
 
 
 @pytest.mark.asyncio
@@ -259,7 +274,203 @@ async def test_lark_send_error_metadata_as_visible_text() -> None:
     )
 
     assert sdk.sent == [("oc_room", "模型调用失败")]
-    assert sdk.reactions == [("om_error", "DONE")]
+    assert sdk.cards == []
+    assert sdk.reactions == [("add", "om_error", "DONE")]
+
+
+@pytest.mark.asyncio
+async def test_lark_auto_message_format_sends_markdown_card_for_markdown() -> None:
+    bus = MessageBus()
+    channel, sdk = await make_started_channel(bus)
+
+    await channel.send(
+        OutboundEvent(
+            content="## 标题\n\n- 第一项\n- 第二项",
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+            metadata={"external_message_id": "om_message"},
+        )
+    )
+
+    assert sdk.sent == []
+    assert sdk.cards == [("oc_room", "**标题**\n\n- 第一项\n- 第二项")]
+    assert sdk.reactions == [("add", "om_message", "DONE")]
+
+
+@pytest.mark.asyncio
+async def test_lark_heading_after_list_is_not_nested_under_previous_bullet() -> None:
+    bus = MessageBus()
+    channel, sdk = await make_started_channel(bus)
+
+    await channel.send(
+        OutboundEvent(
+            content="### 1. 民生文化\n- 第一项\n### 2. 楼市政策\n- 第二项",
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+        )
+    )
+
+    assert sdk.cards == [("oc_room", "**1. 民生文化**\n\n- 第一项\n\n**2. 楼市政策**\n\n- 第二项")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        "```python\nprint('hi')\n```",
+        "[OpenAI](https://openai.com)",
+        "`xagent gateway`",
+        "| A | B |\n| - | - |",
+    ],
+)
+async def test_lark_auto_message_format_detects_common_markdown(content: str) -> None:
+    bus = MessageBus()
+    channel, sdk = await make_started_channel(bus)
+
+    await channel.send(
+        OutboundEvent(
+            content=content,
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+        )
+    )
+
+    assert sdk.cards == [("oc_room", content)]
+
+
+@pytest.mark.asyncio
+async def test_lark_text_message_format_disables_markdown_card() -> None:
+    bus = MessageBus()
+    channel, sdk = await make_started_channel(
+        bus,
+        config=LarkChannelConfig(
+            enabled=True,
+            app_id="cli_test",
+            app_secret="secret",
+            message_format="text",
+        ),
+    )
+
+    await channel.send(
+        OutboundEvent(
+            content="## 标题",
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+        )
+    )
+
+    assert sdk.sent == [("oc_room", "## 标题")]
+    assert sdk.cards == []
+
+
+@pytest.mark.asyncio
+async def test_lark_markdown_card_message_format_forces_card_for_plain_text() -> None:
+    bus = MessageBus()
+    channel, sdk = await make_started_channel(
+        bus,
+        config=LarkChannelConfig(
+            enabled=True,
+            app_id="cli_test",
+            app_secret="secret",
+            message_format="markdown_card",
+        ),
+    )
+
+    await channel.send(
+        OutboundEvent(
+            content="plain answer",
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+        )
+    )
+
+    assert sdk.sent == []
+    assert sdk.cards == [("oc_room", "plain answer")]
+
+
+@pytest.mark.asyncio
+async def test_lark_progress_and_error_force_text_even_with_markdown_format() -> None:
+    bus = MessageBus()
+    channel, sdk = await make_started_channel(
+        bus,
+        config=LarkChannelConfig(
+            enabled=True,
+            app_id="cli_test",
+            app_secret="secret",
+            message_format="markdown_card",
+        ),
+    )
+
+    await channel.send(
+        OutboundEvent(
+            content="dreaming...",
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+            metadata={"progress": True},
+        )
+    )
+    await channel.send(
+        OutboundEvent(
+            content="## error",
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s2"),
+            metadata={"error": True},
+        )
+    )
+
+    assert sdk.sent == [("oc_room", "dreaming..."), ("oc_room", "## error")]
+    assert sdk.cards == []
+
+
+@pytest.mark.asyncio
+async def test_lark_markdown_card_falls_back_to_text_when_too_large() -> None:
+    bus = MessageBus()
+    channel, sdk = await make_started_channel(bus)
+    large_markdown = "## 标题\n\n" + ("- 内容\n" * 8000)
+
+    await channel.send(
+        OutboundEvent(
+            content=large_markdown,
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+        )
+    )
+
+    assert sdk.sent == [("oc_room", large_markdown.strip())]
+    assert sdk.cards == []
+
+
+@pytest.mark.asyncio
+async def test_lark_send_removes_working_reaction_before_done() -> None:
+    bus = MessageBus()
+    channel, sdk = await make_started_channel(bus)
+
+    await channel.handle_message(make_event("hello"))
+    await bus.consume_inbound()
+    await channel.send(
+        OutboundEvent(
+            content="done",
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+            metadata={"external_message_id": "om_message"},
+        )
+    )
+
+    assert sdk.sent == [("oc_room", "done")]
+    assert sdk.reactions == [
+        ("add", "om_message", "OnIt"),
+        ("delete", "om_message", "reaction_1"),
+        ("add", "om_message", "DONE"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -366,7 +577,7 @@ def test_lark_channel_describe_shows_startup_summary() -> None:
         sdk=FakeSdk(),
     )
 
-    assert channel.describe() == "lark domain=feishu require_mention=True streaming=False"
+    assert channel.describe() == "lark domain=feishu require_mention=True message_format=auto streaming=False"
 
 
 def test_lark_sdk_adapter_stop_cleans_background_tasks() -> None:

@@ -112,6 +112,7 @@ def test_memory_store_initializes_markdown_files_and_isolates_workspaces(tmp_pat
     assert first_bundle.memory_path.read_text(encoding="utf-8").startswith("# Workspace Memory")
     meta = json.loads(first_bundle.memory_path.with_name("meta.json").read_text(encoding="utf-8"))
     assert meta["workspace_path"] == str(first.resolve())
+    assert meta["created_at"].endswith("+08:00")
 
 
 def test_memory_store_does_not_overwrite_existing_memory_files(tmp_path) -> None:
@@ -345,7 +346,14 @@ async def test_dream_command_updates_memory_from_new_summary(tmp_path, monkeypat
     summary = session.append_summary("长期项目事实")
     bus = MessageBus()
 
-    await bus.publish_inbound(InboundMessage(content="/dream", channel="test", chat_id="room"))
+    await bus.publish_inbound(
+        InboundMessage(
+            content="/dream",
+            channel="test",
+            chat_id="room",
+            external_message_id="msg_dream",
+        )
+    )
     await agent_loop.dispatch_once(bus)
 
     first = await bus.consume_outbound()
@@ -354,6 +362,8 @@ async def test_dream_command_updates_memory_from_new_summary(tmp_path, monkeypat
     assert second.content == "dream done."
     assert first.stream is not None and first.stream.kind == StreamKind.END
     assert second.stream is not None and second.stream.kind == StreamKind.END
+    assert first.metadata == {"external_message_id": "msg_dream", "progress": True}
+    assert second.metadata == {"external_message_id": "msg_dream"}
     store = agent_loop.memory_store
     assert store is not None
     memory_path = store.workspace_paths(workspace).memory_path
@@ -365,6 +375,7 @@ async def test_dream_command_updates_memory_from_new_summary(tmp_path, monkeypat
     assert store.soul_backup_path.exists()
     state = store.read_dream_state(workspace)
     assert state["sessions"]["test:room"]["last_summary_id"] == summary["summary_id"]
+    assert state["sessions"]["test:room"]["last_dream_at"].endswith("+08:00")
     assert "长期项目事实" in provider.requests[0].messages[-1]["content"]
 
 

@@ -13,6 +13,9 @@ from xagent.channels.base import BaseChannel
 from xagent.config import LarkChannelConfig
 
 
+LARK_CARD_CONTENT_LIMIT_BYTES = 28_000
+
+
 class LarkSdkAdapter:
     """官方 lark-oapi SDK 的薄适配层，便于 channel 单测注入 fake SDK。"""
 
@@ -23,6 +26,7 @@ class LarkSdkAdapter:
             CreateMessageReactionRequestBody,
             CreateMessageRequest,
             CreateMessageRequestBody,
+            DeleteMessageReactionRequest,
             Emoji,
         )
 
@@ -31,6 +35,7 @@ class LarkSdkAdapter:
         self.create_message_request_body = CreateMessageRequestBody
         self.create_message_reaction_request = CreateMessageReactionRequest
         self.create_message_reaction_request_body = CreateMessageReactionRequestBody
+        self.delete_message_reaction_request = DeleteMessageReactionRequest
         self.emoji = Emoji
 
     def domain_for(self, domain: str) -> str:
@@ -173,7 +178,26 @@ class LarkSdkAdapter:
         if hasattr(response, "success") and not response.success():
             raise RuntimeError(f"Failed to send Lark message: {response.code} {response.msg}")
 
-    def add_reaction(self, client: Any, *, message_id: str, emoji_type: str) -> None:
+    def send_markdown_card(self, client: Any, *, chat_id: str, markdown: str) -> None:
+        content = _markdown_card_content(_normalize_lark_markdown(markdown))
+        body = (
+            self.create_message_request_body.builder()
+            .receive_id(chat_id)
+            .msg_type("interactive")
+            .content(content)
+            .build()
+        )
+        request = (
+            self.create_message_request.builder()
+            .receive_id_type("chat_id")
+            .request_body(body)
+            .build()
+        )
+        response = client.im.v1.message.create(request)
+        if hasattr(response, "success") and not response.success():
+            raise RuntimeError(f"Failed to send Lark markdown card: {response.code} {response.msg}")
+
+    def add_reaction(self, client: Any, *, message_id: str, emoji_type: str) -> str | None:
         reaction_type = self.emoji.builder().emoji_type(emoji_type).build()
         body = (
             self.create_message_reaction_request_body.builder()
@@ -189,6 +213,23 @@ class LarkSdkAdapter:
         response = client.im.v1.message_reaction.create(request)
         if hasattr(response, "success") and not response.success():
             raise RuntimeError(f"Failed to add Lark reaction: {response.code} {response.msg}")
+        reaction_id = getattr(getattr(response, "data", None), "reaction_id", None)
+        if reaction_id:
+            return str(reaction_id)
+        payload = self._raw_json(response)
+        raw_reaction_id = payload.get("data", {}).get("reaction_id")
+        return str(raw_reaction_id) if raw_reaction_id else None
+
+    def delete_reaction(self, client: Any, *, message_id: str, reaction_id: str) -> None:
+        request = (
+            self.delete_message_reaction_request.builder()
+            .message_id(message_id)
+            .reaction_id(reaction_id)
+            .build()
+        )
+        response = client.im.v1.message_reaction.delete(request)
+        if hasattr(response, "success") and not response.success():
+            raise RuntimeError(f"Failed to delete Lark reaction: {response.code} {response.msg}")
 
     @staticmethod
     def _ensure_ws_loop(ws_client: Any) -> asyncio.AbstractEventLoop:
@@ -242,11 +283,13 @@ class LarkChannel(BaseChannel):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._started = False
         self._stopping = False
+        self._working_reaction_ids: dict[str, str] = {}
 
     def describe(self) -> str:
         return (
             f"lark domain={self.config.domain} "
             f"require_mention={self.config.require_mention} "
+            f"message_format={self.config.message_format} "
             f"streaming={self.supports_streaming}"
         )
 
@@ -339,7 +382,7 @@ class LarkChannel(BaseChannel):
             },
         )
         await self.bus.publish_inbound(inbound)
-        await self._add_reaction(incoming.message_id, self.config.working_reaction)
+        await self._add_working_reaction(incoming.message_id)
         return inbound
 
     async def send(self, event: OutboundEvent) -> None:
@@ -350,13 +393,18 @@ class LarkChannel(BaseChannel):
         text = event.content.strip()
         if not text:
             return
-        await asyncio.to_thread(self.sdk.send_text, self._client, chat_id=event.chat_id, text=text)
+        if self._should_send_markdown_card(event, text):
+            await asyncio.to_thread(
+                self.sdk.send_markdown_card,
+                self._client,
+                chat_id=event.chat_id,
+                markdown=_normalize_lark_markdown(text),
+            )
+        else:
+            await asyncio.to_thread(self.sdk.send_text, self._client, chat_id=event.chat_id, text=text)
         if not event.metadata.get("progress"):
             message_id = event.metadata.get("external_message_id")
-            await self._add_reaction(
-                str(message_id) if message_id else None,
-                self.config.done_reaction,
-            )
+            await self._finish_reaction(str(message_id) if message_id else None)
 
     async def stop(self) -> None:
         self._stopping = True
@@ -389,21 +437,62 @@ class LarkChannel(BaseChannel):
         future = asyncio.run_coroutine_threadsafe(self.handle_message(event), self._loop)
         future.add_done_callback(_consume_callback_result)
 
-    async def _add_reaction(self, message_id: str | None, emoji_type: str) -> None:
+    async def _add_working_reaction(self, message_id: str | None) -> None:
+        reaction_id = await self._add_reaction(message_id, self.config.working_reaction)
+        if message_id and reaction_id:
+            self._working_reaction_ids[message_id] = reaction_id
+
+    async def _finish_reaction(self, message_id: str | None) -> None:
+        if not message_id:
+            return
+        reaction_id = self._working_reaction_ids.pop(message_id, None)
+        if reaction_id:
+            await self._delete_reaction(message_id, reaction_id)
+        await self._add_reaction(message_id, self.config.done_reaction)
+
+    async def _add_reaction(self, message_id: str | None, emoji_type: str) -> str | None:
         if not self.config.reactions_enabled:
-            return
+            return None
         if self._client is None or not message_id or not emoji_type:
-            return
+            return None
         add_reaction = getattr(self.sdk, "add_reaction", None)
         if not callable(add_reaction):
-            return
+            return None
         with contextlib.suppress(Exception):
-            await asyncio.to_thread(
+            return await asyncio.to_thread(
                 add_reaction,
                 self._client,
                 message_id=message_id,
                 emoji_type=emoji_type,
             )
+        return None
+
+    async def _delete_reaction(self, message_id: str, reaction_id: str) -> None:
+        if not self.config.reactions_enabled:
+            return
+        if self._client is None:
+            return
+        delete_reaction = getattr(self.sdk, "delete_reaction", None)
+        if not callable(delete_reaction):
+            return
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(
+                delete_reaction,
+                self._client,
+                message_id=message_id,
+                reaction_id=reaction_id,
+            )
+
+    def _should_send_markdown_card(self, event: OutboundEvent, text: str) -> bool:
+        if event.metadata.get("progress") or event.metadata.get("error"):
+            return False
+        if not _fits_lark_markdown_card_limit(text):
+            return False
+        if self.config.message_format == "markdown_card":
+            return True
+        if self.config.message_format == "text":
+            return False
+        return _looks_like_markdown(text)
 
 
 def _consume_callback_result(future: Future[Any]) -> None:
@@ -482,6 +571,50 @@ def _extract_text(content: str) -> str:
         if isinstance(payload, dict):
             return str(payload.get("text") or "")
     return content
+
+
+def _markdown_card_content(markdown: str) -> str:
+    return json.dumps(
+        {"elements": [{"tag": "markdown", "content": markdown}]},
+        ensure_ascii=False,
+    )
+
+
+def _fits_lark_markdown_card_limit(markdown: str) -> bool:
+    return len(_markdown_card_content(_normalize_lark_markdown(markdown)).encode("utf-8")) <= LARK_CARD_CONTENT_LIMIT_BYTES
+
+
+def _normalize_lark_markdown(markdown: str) -> str:
+    """把常见 Markdown 写法转换成飞书卡片 markdown 能稳定渲染的子集。"""
+
+    source_lines = markdown.splitlines()
+    lines: list[str] = []
+    for index, line in enumerate(source_lines):
+        heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if heading:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.append(f"**{heading.group(2)}**")
+            next_line = source_lines[index + 1] if index + 1 < len(source_lines) else ""
+            if next_line.strip():
+                lines.append("")
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _looks_like_markdown(text: str) -> bool:
+    patterns = (
+        r"(?m)^#{1,6}\s+\S",
+        r"(?m)^\s*(?:[-*+]\s+\S|\d+\.\s+\S)",
+        r"(?m)^>\s+\S",
+        r"(?m)^```",
+        r"`[^`\n]+`",
+        r"\*\*[^*\n]+\*\*",
+        r"\[[^\]\n]+\]\([^)]+\)",
+        r"(?m)^\s*\|.+\|\s*$",
+    )
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def _mentions_open_id(mentions: list[Any], open_id: str) -> bool:

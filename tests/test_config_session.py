@@ -14,7 +14,7 @@ from xagent.config import (
     load_config,
     xagent_home,
 )
-from xagent.session import SessionStore, resolve_session_id, session_id_from_chat
+from xagent.session import SessionStore, local_now, resolve_session_id, session_id_from_chat
 
 
 def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
@@ -34,6 +34,7 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert config.channels.lark.reactions_enabled is True
     assert config.channels.lark.working_reaction == "OnIt"
     assert config.channels.lark.done_reaction == "DONE"
+    assert config.channels.lark.message_format == "auto"
     assert config.channels.weixin.enabled is False
     assert config.channels.weixin.allow_from == []
     assert config.channels.weixin.token is None
@@ -70,6 +71,7 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert "reactions_enabled: true" in config_text
     assert "working_reaction: OnIt" in config_text
     assert "done_reaction: DONE" in config_text
+    assert "message_format: auto" in config_text
     assert "weixin:" in config_text
     assert "tools:" in config_text
     assert "memory:" in config_text
@@ -99,6 +101,7 @@ channels:
     reactions_enabled: false
     working_reaction: Thinking
     done_reaction: OK
+    message_format: markdown_card
 """,
         encoding="utf-8",
     )
@@ -119,12 +122,18 @@ channels:
         reactions_enabled=False,
         working_reaction="Thinking",
         done_reaction="OK",
+        message_format="markdown_card",
     )
 
 
 def test_lark_channel_config_rejects_unknown_domain() -> None:
     with pytest.raises(ValueError, match="channels.lark.domain"):
         LarkChannelConfig(domain="unknown")
+
+
+def test_lark_channel_config_rejects_unknown_message_format() -> None:
+    with pytest.raises(ValueError, match="channels.lark.message_format"):
+        LarkChannelConfig(message_format="post")
 
 
 def test_weixin_channel_config_loads_explicit_values(tmp_path) -> None:
@@ -341,11 +350,21 @@ def test_session_package_writes_meta_messages_trace_and_artifacts(tmp_path) -> N
     assert session.session_state_path.exists()
     records = [json.loads(line) for line in session.messages_path.read_text().splitlines()]
     assert records[0]["type"] == "meta"
+    assert records[0]["created_at"].endswith("+08:00")
     assert records[0]["workspace_path"] == str(workspace.resolve())
+    assert records[1]["at"].endswith("+08:00")
     assert records[1]["message"] == {"role": "user", "content": "hello"}
     trace = [json.loads(line) for line in session.trace_path.read_text().splitlines()]
+    assert trace[0]["at"].endswith("+08:00")
     assert trace[1]["type"] == "example"
+    assert trace[1]["at"].endswith("+08:00")
     assert trace[1]["ok"] is True
+    summaries = [json.loads(line) for line in session.summary_path.read_text().splitlines()]
+    assert summaries[0]["at"].endswith("+08:00")
+
+
+def test_session_time_helper_uses_shanghai_timezone() -> None:
+    assert local_now().endswith("+08:00")
 
 
 def test_channel_chat_session_identity_and_explicit_override() -> None:
@@ -458,6 +477,7 @@ def test_session_summary_jsonl_becomes_model_visible_system_message(tmp_path) ->
     messages = session.read_model_messages()
 
     assert summary["type"] == "summary"
+    assert summary["created_at"].endswith("+08:00")
     assert summary["covers"]["messages_until_index"] == 1
     assert [record["type"] for record in session.read_records()] == ["meta", "message", "message"]
     assert session.read_session_state()["compact"]["latest_summary_id"] == summary["summary_id"]

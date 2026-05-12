@@ -1,6 +1,7 @@
 from xagent.session.package import (
     Session,
     SessionStore,
+    local_now,
     new_session_id,
     resolve_session_id,
     sanitize_id,
@@ -11,6 +12,7 @@ from xagent.session.package import (
 __all__ = [
     "Session",
     "SessionStore",
+    "local_now",
     "new_session_id",
     "resolve_session_id",
     "sanitize_id",
