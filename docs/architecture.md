@@ -321,8 +321,8 @@ approver 协作完成。
 只读且非独占工具可以并行。写文件、shell、外部网络/API 默认串行或独占。
 `read_file` / `search` 默认允许；`apply_patch` 继续走写文件权限确认。`web_fetch` /
 `web_search` 通过 `permissions.web` 控制，第一版默认允许公开网页查询并写入 trace。
-`permissions.network_default` 保留给更高风险的通用网络/API 能力。`shell` 默认允许普通命令，
-但会先经过黑名单策略，命中规则时直接作为 tool error 返回，不会再请求用户授权覆盖。
+`shell` 默认允许普通命令，但会先经过黑名单策略，命中规则时直接作为 tool error 返回，
+不会再请求用户授权覆盖。
 
 Shell 黑名单使用 `shlex` 做词法切分。规则可以是单 token，例如 `rm`、`sudo`，也可以是连续
 token 序列，例如 `npm install`、`uv pip install`。这只是第一版安全下限，不承诺覆盖所有

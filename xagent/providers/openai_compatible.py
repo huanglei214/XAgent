@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator, cast
 
-from xagent.providers.registry import ProviderSpec
 from xagent.providers.types import ModelEvent, ModelRequest
 from xagent.providers.util import MessageBuilder, safe_model_dump
 
@@ -18,14 +17,12 @@ class OpenAICompatProvider:
         extra_headers: dict[str, str] | None = None,
         extra_body: dict[str, Any] | None = None,
         timeout_seconds: float = 120.0,
-        spec: ProviderSpec | None = None,
     ) -> None:
         self.api_key = api_key
         self.api_base = api_base
         self.extra_headers = extra_headers or {}
         self.extra_body = extra_body or {}
         self.timeout_seconds = timeout_seconds
-        self.spec = spec
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelEvent]:
         try:

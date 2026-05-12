@@ -62,6 +62,36 @@ xagent gateway
 CLI chat、Lark 和 Weixin 都支持会话内 slash command。第一版支持 `/dream`、`/dream --compact`
 和 `/help`。
 
+## Docker
+
+Docker 部署默认复用宿主机 `~/.xagent`，容器内挂载为 `/root/.xagent`。因此不需要维护第二份
+config；先确认宿主机 `~/.xagent/config.yaml` 已经填好 provider，并至少启用一个 channel。
+配置里的 workspace 路径建议写成 `~/.xagent/...`，避免写入某台机器专属的绝对路径。
+
+```bash
+docker compose up -d --build
+docker compose logs -f xagent
+```
+
+修改代码、依赖或 Dockerfile 后，重新 build 并启动：
+
+```bash
+docker compose up -d --build
+```
+
+只修改 `~/.xagent/config.yaml` 后，不需要 rebuild，重启容器即可：
+
+```bash
+docker compose restart xagent
+```
+
+如果启用 `weixin` channel，先用同一个挂载目录完成二维码登录：
+
+```bash
+docker compose run --rm xagent channels login weixin
+docker compose up -d
+```
+
 ## Bus 和 Channels
 
 类聊天流程通过进程内 `MessageBus` 连接消息 channel 和 Agent runtime。session
@@ -192,8 +222,8 @@ tools:
 
 只读工具 `read_file` / `search` 默认允许。`apply_patch` 继续按写文件风险走确认。
 `web_fetch` / `web_search` 用 `permissions.web` 控制，默认允许公开网页查询并写入 trace。
-`permissions.network_default` 保留给更高风险的通用网络/API 能力。`shell` 第一版采用“默认允许
-加黑名单直接拒绝”：普通只读命令不会反复弹授权，命中高风险规则时也不会提供授权覆盖。
+`shell` 第一版采用“默认允许加黑名单直接拒绝”：普通只读命令不会反复弹授权，
+命中高风险规则时也不会提供授权覆盖。
 
 ```yaml
 permissions:

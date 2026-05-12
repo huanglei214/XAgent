@@ -31,6 +31,9 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert config.channels.lark.enabled is False
     assert config.channels.lark.app_id is None
     assert config.channels.lark.app_secret is None
+    assert config.channels.lark.reactions_enabled is True
+    assert config.channels.lark.working_reaction == "OnIt"
+    assert config.channels.lark.done_reaction == "DONE"
     assert config.channels.weixin.enabled is False
     assert config.channels.weixin.allow_from == []
     assert config.channels.weixin.token is None
@@ -64,6 +67,9 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert "command_default" not in config_text
     assert "channels:" in config_text
     assert "lark:" in config_text
+    assert "reactions_enabled: true" in config_text
+    assert "working_reaction: OnIt" in config_text
+    assert "done_reaction: DONE" in config_text
     assert "weixin:" in config_text
     assert "tools:" in config_text
     assert "memory:" in config_text
@@ -90,6 +96,9 @@ channels:
     strip_mention: false
     auto_reconnect: false
     log_level: debug
+    reactions_enabled: false
+    working_reaction: Thinking
+    done_reaction: OK
 """,
         encoding="utf-8",
     )
@@ -107,6 +116,9 @@ channels:
         strip_mention=False,
         auto_reconnect=False,
         log_level="debug",
+        reactions_enabled=False,
+        working_reaction="Thinking",
+        done_reaction="OK",
     )
 
 
@@ -190,6 +202,28 @@ providers:
     config = load_config(path)
 
     assert config.providers.openai_compat.api_key is None
+
+
+def test_config_ignores_removed_permission_and_trace_fields(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+permissions:
+  remember: session
+  read_default: allow
+  write_default: ask
+  network_default: ask
+trace:
+  context_threshold_ratio: 0.5
+  model_events: true
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.permissions.shell.default == "allow"
+    assert config.trace.model_events is True
 
 
 def test_shell_permission_config_loads_custom_blacklist(tmp_path) -> None:

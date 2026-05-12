@@ -20,7 +20,6 @@ class FakeWeixinApi:
         self.qr_statuses: list[dict[str, Any]] = []
         self.updates: list[dict[str, Any]] = []
         self.sent: list[dict[str, str]] = []
-        self.get_updates_calls = 0
 
     def configure(self, **kwargs: Any) -> None:
         self.configured.update({key: value for key, value in kwargs.items() if value is not None})
@@ -40,7 +39,6 @@ class FakeWeixinApi:
 
     async def get_updates(self, get_updates_buf: str) -> dict[str, Any]:
         del get_updates_buf
-        self.get_updates_calls += 1
         if self.updates:
             return self.updates.pop(0)
         await asyncio.sleep(3600)

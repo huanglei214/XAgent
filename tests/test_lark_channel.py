@@ -34,7 +34,8 @@ class FakeSdk:
     def __init__(self) -> None:
         self.bot_info_calls = 0
         self.sent: list[tuple[str, str]] = []
-        self.event_callback: Any | None = None
+        self.reactions: list[tuple[str, str]] = []
+        self.fail_reactions = False
         self.ws_client = FakeWsClient()
         self.client = FakeClient()
         self.client_args: dict[str, Any] = {}
@@ -55,7 +56,7 @@ class FakeSdk:
         return "ou_bot"
 
     def build_event_handler(self, **kwargs: Any) -> object:
-        self.event_callback = kwargs["callback"]
+        assert callable(kwargs["callback"])
         return object()
 
     def build_ws_client(self, **kwargs: Any) -> FakeWsClient:
@@ -66,6 +67,12 @@ class FakeSdk:
         assert client is self.client
         self.sent.append((chat_id, text))
 
+    def add_reaction(self, client: Any, *, message_id: str, emoji_type: str) -> None:
+        assert client is self.client
+        if self.fail_reactions:
+            raise RuntimeError("reaction failed")
+        self.reactions.append((message_id, emoji_type))
+
 
 def make_event(
     text: str,
@@ -73,6 +80,7 @@ def make_event(
     chat_id: str = "oc_room",
     chat_type: str = "p2p",
     message_type: str = "text",
+    message_id: str = "om_message",
     sender_id: str = "ou_user",
     sender_type: str = "user",
     mentions: list[dict[str, Any]] | None = None,
@@ -85,7 +93,7 @@ def make_event(
                 "tenant_key": "tenant",
             },
             "message": {
-                "message_id": "om_message",
+                "message_id": message_id,
                 "chat_id": chat_id,
                 "chat_type": chat_type,
                 "message_type": message_type,
@@ -152,7 +160,7 @@ async def test_lark_channel_start_reads_config_and_fetches_bot_open_id_once() ->
 @pytest.mark.asyncio
 async def test_lark_private_text_message_publishes_inbound() -> None:
     bus = MessageBus()
-    channel, _sdk = await make_started_channel(bus)
+    channel, sdk = await make_started_channel(bus)
 
     received = await channel.handle_message(make_event("hello"))
     inbound = await bus.consume_inbound()
@@ -164,12 +172,13 @@ async def test_lark_private_text_message_publishes_inbound() -> None:
     assert inbound.sender_id == "ou_user"
     assert inbound.external_message_id == "om_message"
     assert inbound.metadata["chat_type"] == "p2p"
+    assert sdk.reactions == [("om_message", "OnIt")]
 
 
 @pytest.mark.asyncio
 async def test_lark_group_mention_publishes_inbound_and_strips_mention() -> None:
     bus = MessageBus()
-    channel, _sdk = await make_started_channel(bus)
+    channel, sdk = await make_started_channel(bus)
 
     received = await channel.handle_message(
         make_event("@_user_1 继续", chat_type="group", mentions=[bot_mention()])
@@ -179,29 +188,32 @@ async def test_lark_group_mention_publishes_inbound_and_strips_mention() -> None
     assert received == inbound
     assert inbound.content == "继续"
     assert inbound.chat_id == "oc_room"
+    assert sdk.reactions == [("om_message", "OnIt")]
 
 
 @pytest.mark.asyncio
 async def test_lark_group_without_mention_is_ignored() -> None:
     bus = MessageBus()
-    channel, _sdk = await make_started_channel(bus)
+    channel, sdk = await make_started_channel(bus)
 
     received = await channel.handle_message(make_event("hello", chat_type="group"))
 
     assert received is None
     assert bus.inbound.empty()
+    assert sdk.reactions == []
 
 
 @pytest.mark.asyncio
 async def test_lark_ignores_non_text_empty_and_bot_self_messages() -> None:
     bus = MessageBus()
-    channel, _sdk = await make_started_channel(bus)
+    channel, sdk = await make_started_channel(bus)
 
     assert await channel.handle_message(make_event("hello", message_type="image")) is None
     assert await channel.handle_message(make_event("   ")) is None
     assert await channel.handle_message(make_event("hello", sender_id="ou_bot")) is None
     assert await channel.handle_message(make_event("hello", sender_type="app")) is None
     assert bus.inbound.empty()
+    assert sdk.reactions == []
 
 
 @pytest.mark.asyncio
@@ -223,10 +235,12 @@ async def test_lark_send_ignores_delta_and_sends_end() -> None:
             channel="lark",
             chat_id="oc_room",
             stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+            metadata={"external_message_id": "om_message"},
         )
     )
 
     assert sdk.sent == [("oc_room", "hello")]
+    assert sdk.reactions == [("om_message", "DONE")]
 
 
 @pytest.mark.asyncio
@@ -240,11 +254,84 @@ async def test_lark_send_error_metadata_as_visible_text() -> None:
             channel="lark",
             chat_id="oc_room",
             stream=StreamState(kind=StreamKind.END, stream_id="s1"),
-            metadata={"error": True},
+            metadata={"error": True, "external_message_id": "om_error"},
         )
     )
 
     assert sdk.sent == [("oc_room", "模型调用失败")]
+    assert sdk.reactions == [("om_error", "DONE")]
+
+
+@pytest.mark.asyncio
+async def test_lark_reaction_failure_does_not_block_inbound_or_outbound() -> None:
+    bus = MessageBus()
+    sdk = FakeSdk()
+    sdk.fail_reactions = True
+    channel, sdk = await make_started_channel(bus, sdk=sdk)
+
+    received = await channel.handle_message(make_event("hello"))
+    inbound = await bus.consume_inbound()
+    await channel.send(
+        OutboundEvent(
+            content="done",
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+            metadata={"external_message_id": "om_message"},
+        )
+    )
+
+    assert received == inbound
+    assert sdk.sent == [("oc_room", "done")]
+    assert sdk.reactions == []
+
+
+@pytest.mark.asyncio
+async def test_lark_reactions_can_be_disabled() -> None:
+    bus = MessageBus()
+    channel, sdk = await make_started_channel(
+        bus,
+        config=LarkChannelConfig(
+            enabled=True,
+            app_id="cli_test",
+            app_secret="secret",
+            reactions_enabled=False,
+        ),
+    )
+
+    await channel.handle_message(make_event("hello"))
+    await bus.consume_inbound()
+    await channel.send(
+        OutboundEvent(
+            content="done",
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+            metadata={"external_message_id": "om_message"},
+        )
+    )
+
+    assert sdk.sent == [("oc_room", "done")]
+    assert sdk.reactions == []
+
+
+@pytest.mark.asyncio
+async def test_lark_progress_outbound_does_not_add_done_reaction() -> None:
+    bus = MessageBus()
+    channel, sdk = await make_started_channel(bus)
+
+    await channel.send(
+        OutboundEvent(
+            content="dreaming...",
+            channel="lark",
+            chat_id="oc_room",
+            stream=StreamState(kind=StreamKind.END, stream_id="s1"),
+            metadata={"external_message_id": "om_message", "progress": True},
+        )
+    )
+
+    assert sdk.sent == [("oc_room", "dreaming...")]
+    assert sdk.reactions == []
 
 
 @pytest.mark.asyncio
@@ -303,7 +390,6 @@ def test_lark_sdk_adapter_stop_cleans_background_tasks() -> None:
             finalized.append("receive")
 
     async def fake_connect() -> None:
-        ws_client._conn = object()
         asyncio.get_running_loop().create_task(fake_receive_loop())
         connected.set()
 
@@ -316,7 +402,6 @@ def test_lark_sdk_adapter_stop_cleans_background_tasks() -> None:
 
     async def fake_disconnect() -> None:
         finalized.append("disconnect")
-        ws_client._conn = None
 
     ws_client._connect = fake_connect
     ws_client._ping_loop = fake_ping_loop

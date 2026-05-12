@@ -34,7 +34,6 @@ def make_provider(config: AppConfig) -> ProviderSnapshot:
         extra_headers=provider_config.extra_headers,
         extra_body=provider_config.extra_body,
         timeout_seconds=provider_config.timeout_seconds,
-        spec=spec,
     )
     return ProviderSnapshot(
         provider=provider,

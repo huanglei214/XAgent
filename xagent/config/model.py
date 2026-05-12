@@ -115,10 +115,6 @@ class WebPermissionConfig:
 
 @dataclass
 class PermissionConfig:
-    remember: str = "session"
-    read_default: str = "allow"
-    write_default: str = "ask"
-    network_default: str = "ask"
     shell: ShellPermissionConfig = field(default_factory=ShellPermissionConfig)
     web: WebPermissionConfig = field(default_factory=WebPermissionConfig)
 
@@ -127,7 +123,6 @@ class PermissionConfig:
 class TraceConfig:
     raw_model_io: bool = False
     model_events: bool = False
-    context_threshold_ratio: float = 0.70
 
 
 @dataclass
@@ -198,6 +193,9 @@ class LarkChannelConfig:
     strip_mention: bool = True
     auto_reconnect: bool = True
     log_level: str = "info"
+    reactions_enabled: bool = True
+    working_reaction: str = "OnIt"
+    done_reaction: str = "DONE"
 
     def __post_init__(self) -> None:
         if self.domain not in {"feishu", "lark"}:
@@ -403,6 +401,9 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         **_merge_known_fields(default.tools.web.duckduckgo, duckduckgo_payload)
     )
     tools_values["web"] = WebToolsConfig(**web_values)
+    trace_payload = payload.get("trace", {})
+    if not isinstance(trace_payload, dict):
+        trace_payload = {}
 
     return AppConfig(
         agents=AgentsConfig(
@@ -419,7 +420,7 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
             **{**asdict(default.workspace), **payload.get("workspace", {})}
         ),
         permissions=PermissionConfig(**permission_values),
-        trace=TraceConfig(**{**asdict(default.trace), **payload.get("trace", {})}),
+        trace=TraceConfig(**_merge_known_fields(default.trace, trace_payload)),
         tools=ToolsConfig(**tools_values),
         limits=AgentLimitsConfig(**{**asdict(default.limits), **payload.get("limits", {})}),
         memory=MemoryConfig(**{**asdict(default.memory), **payload.get("memory", {})}),

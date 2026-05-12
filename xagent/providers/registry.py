@@ -7,17 +7,11 @@ from dataclasses import dataclass
 class ProviderSpec:
     name: str
     backend: str
-    display_name: str = ""
-
-    @property
-    def label(self) -> str:
-        return self.display_name or self.name
 
 
 OPENAI_COMPAT_SPEC = ProviderSpec(
     name="openai_compat",
     backend="openai_compat",
-    display_name="OpenAI Compatible",
 )
 
 PROVIDERS: tuple[ProviderSpec, ...] = (OPENAI_COMPAT_SPEC,)

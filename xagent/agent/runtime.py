@@ -113,6 +113,7 @@ class AgentLoop:
                         reply_to=inbound.sender_id,
                         session_id=session_id,
                         stream=StreamState(kind=StreamKind.DELTA, stream_id=stream_id),
+                        metadata=_metadata_for_inbound(inbound),
                     )
                 )
 
@@ -142,7 +143,7 @@ class AgentLoop:
                     reply_to=inbound.sender_id,
                     session_id=session_id,
                     stream=StreamState(kind=StreamKind.END, stream_id=stream_id),
-                    metadata={"error": True},
+                    metadata=_metadata_for_inbound(inbound, error=True),
                 )
             )
 
@@ -166,6 +167,7 @@ class AgentLoop:
                         reply_to=inbound.sender_id,
                         session_id=agent.session.session_id,
                         stream=StreamState(kind=StreamKind.END, stream_id=uuid4().hex),
+                        metadata=_metadata_for_inbound(inbound, progress=True),
                     )
                 )
                 await self.command_router.execute(command, agent)
@@ -177,6 +179,7 @@ class AgentLoop:
                         reply_to=inbound.sender_id,
                         session_id=agent.session.session_id,
                         stream=StreamState(kind=StreamKind.END, stream_id=uuid4().hex),
+                        metadata=_metadata_for_inbound(inbound),
                     )
                 )
                 return
@@ -188,6 +191,7 @@ class AgentLoop:
                     reply_to=inbound.sender_id,
                     session_id=agent.session.session_id,
                     stream=StreamState(kind=StreamKind.END, stream_id=stream_id),
+                    metadata=_metadata_for_inbound(inbound),
                 )
             )
             return
@@ -203,6 +207,7 @@ class AgentLoop:
                 reply_to=inbound.sender_id,
                 session_id=agent.session.session_id,
                 stream=StreamState(kind=StreamKind.END, stream_id=stream_id),
+                metadata=_metadata_for_inbound(inbound),
             )
         )
 
@@ -245,3 +250,11 @@ class AgentLoop:
                 await self._handle_inbound(bus, inbound, session_id=session_id)
             finally:
                 queue.task_done()
+
+
+def _metadata_for_inbound(inbound: InboundMessage, **extra: object) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    if inbound.external_message_id:
+        metadata["external_message_id"] = inbound.external_message_id
+    metadata.update(extra)
+    return metadata

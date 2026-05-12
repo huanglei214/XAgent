@@ -1,0 +1,11 @@
+services:
+  xagent:
+    build:
+      context: .
+    image: xagent:local
+    restart: unless-stopped
+    environment:
+      XAGENT_HOME: /root/.xagent
+    volumes:
+      - ~/.xagent:/root/.xagent
+    command: ["gateway"]

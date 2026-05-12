@@ -19,13 +19,19 @@ class LarkSdkAdapter:
     def __init__(self) -> None:
         import lark_oapi as lark  # type: ignore[import-untyped]
         from lark_oapi.api.im.v1 import (  # type: ignore[import-untyped]
+            CreateMessageReactionRequest,
+            CreateMessageReactionRequestBody,
             CreateMessageRequest,
             CreateMessageRequestBody,
+            Emoji,
         )
 
         self.lark = lark
         self.create_message_request = CreateMessageRequest
         self.create_message_request_body = CreateMessageRequestBody
+        self.create_message_reaction_request = CreateMessageReactionRequest
+        self.create_message_reaction_request_body = CreateMessageReactionRequestBody
+        self.emoji = Emoji
 
     def domain_for(self, domain: str) -> str:
         if domain == "lark":
@@ -166,6 +172,23 @@ class LarkSdkAdapter:
         response = client.im.v1.message.create(request)
         if hasattr(response, "success") and not response.success():
             raise RuntimeError(f"Failed to send Lark message: {response.code} {response.msg}")
+
+    def add_reaction(self, client: Any, *, message_id: str, emoji_type: str) -> None:
+        reaction_type = self.emoji.builder().emoji_type(emoji_type).build()
+        body = (
+            self.create_message_reaction_request_body.builder()
+            .reaction_type(reaction_type)
+            .build()
+        )
+        request = (
+            self.create_message_reaction_request.builder()
+            .message_id(message_id)
+            .request_body(body)
+            .build()
+        )
+        response = client.im.v1.message_reaction.create(request)
+        if hasattr(response, "success") and not response.success():
+            raise RuntimeError(f"Failed to add Lark reaction: {response.code} {response.msg}")
 
     @staticmethod
     def _ensure_ws_loop(ws_client: Any) -> asyncio.AbstractEventLoop:
@@ -316,6 +339,7 @@ class LarkChannel(BaseChannel):
             },
         )
         await self.bus.publish_inbound(inbound)
+        await self._add_reaction(incoming.message_id, self.config.working_reaction)
         return inbound
 
     async def send(self, event: OutboundEvent) -> None:
@@ -327,6 +351,12 @@ class LarkChannel(BaseChannel):
         if not text:
             return
         await asyncio.to_thread(self.sdk.send_text, self._client, chat_id=event.chat_id, text=text)
+        if not event.metadata.get("progress"):
+            message_id = event.metadata.get("external_message_id")
+            await self._add_reaction(
+                str(message_id) if message_id else None,
+                self.config.done_reaction,
+            )
 
     async def stop(self) -> None:
         self._stopping = True
@@ -358,6 +388,22 @@ class LarkChannel(BaseChannel):
             raise RuntimeError("Lark channel event loop is not initialized")
         future = asyncio.run_coroutine_threadsafe(self.handle_message(event), self._loop)
         future.add_done_callback(_consume_callback_result)
+
+    async def _add_reaction(self, message_id: str | None, emoji_type: str) -> None:
+        if not self.config.reactions_enabled:
+            return
+        if self._client is None or not message_id or not emoji_type:
+            return
+        add_reaction = getattr(self.sdk, "add_reaction", None)
+        if not callable(add_reaction):
+            return
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(
+                add_reaction,
+                self._client,
+                message_id=message_id,
+                emoji_type=emoji_type,
+            )
 
 
 def _consume_callback_result(future: Future[Any]) -> None:

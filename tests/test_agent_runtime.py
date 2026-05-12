@@ -73,7 +73,13 @@ def make_loop(tmp_path, monkeypatch, scripts: list[list[ModelEvent]]):
 async def test_agent_loop_dispatches_inbound_to_outbound(tmp_path, monkeypatch) -> None:
     agent_loop, provider = make_loop(tmp_path, monkeypatch, [text_response("hello")])
     bus = MessageBus()
-    inbound = InboundMessage(content="hi", channel="test", chat_id="room", sender_id="alice")
+    inbound = InboundMessage(
+        content="hi",
+        channel="test",
+        chat_id="room",
+        sender_id="alice",
+        external_message_id="msg_1",
+    )
 
     await bus.publish_inbound(inbound)
     await agent_loop.dispatch_once(bus)
@@ -87,6 +93,7 @@ async def test_agent_loop_dispatches_inbound_to_outbound(tmp_path, monkeypatch) 
     assert delta.chat_id == "room"
     assert delta.reply_to == "alice"
     assert delta.session_id == "test:room"
+    assert delta.metadata["external_message_id"] == "msg_1"
     assert final.stream is not None
     assert final.stream.kind == StreamKind.END
     assert final.stream.stream_id == delta.stream.stream_id
@@ -95,6 +102,7 @@ async def test_agent_loop_dispatches_inbound_to_outbound(tmp_path, monkeypatch) 
     assert final.chat_id == "room"
     assert final.reply_to == "alice"
     assert final.session_id == "test:room"
+    assert final.metadata["external_message_id"] == "msg_1"
     assert provider.requests[0].messages[-1]["content"] == "[sender:alice] hi"
 
 
@@ -102,7 +110,13 @@ async def test_agent_loop_dispatches_inbound_to_outbound(tmp_path, monkeypatch) 
 async def test_agent_loop_publishes_agent_errors(tmp_path, monkeypatch) -> None:
     agent_loop, _provider = make_loop(tmp_path, monkeypatch, [])
     bus = MessageBus()
-    inbound = InboundMessage(content="hi", channel="test", chat_id="room", sender_id="alice")
+    inbound = InboundMessage(
+        content="hi",
+        channel="test",
+        chat_id="room",
+        sender_id="alice",
+        external_message_id="msg_error",
+    )
 
     await bus.publish_inbound(inbound)
     await agent_loop.dispatch_once(bus)
@@ -116,6 +130,7 @@ async def test_agent_loop_publishes_agent_errors(tmp_path, monkeypatch) -> None:
     assert event.reply_to == "alice"
     assert event.session_id == "test:room"
     assert event.metadata["error"] is True
+    assert event.metadata["external_message_id"] == "msg_error"
 
 
 @pytest.mark.asyncio
