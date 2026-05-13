@@ -48,6 +48,7 @@ def tool_response(name: str, arguments: str, *, call_id: str = "call_1") -> list
 def make_loop(tmp_path, monkeypatch, scripts: list[list[ModelEvent]]):
     config = default_config()
     config.workspace.sessions_path = str(tmp_path / "sessions")
+    config.cron.tasks_path = str(tmp_path / "cron" / "tasks.json")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     provider = ScriptedProvider(scripts)
@@ -242,6 +243,29 @@ def test_agent_loop_builds_agent_with_web_permission_config(tmp_path, monkeypatc
 
     assert web_search is not None
     assert getattr(web_search, "web_permission").default == "deny"
+
+
+def test_agent_loop_builds_agent_with_cron_tool_when_enabled(tmp_path, monkeypatch) -> None:
+    agent_loop, _provider = make_loop(tmp_path, monkeypatch, [text_response("hello")])
+
+    agent = agent_loop.agent_for(
+        InboundMessage(content="hi", channel="lark", chat_id="room", sender_id="alice")
+    )
+
+    cron = agent.tools.get("cron")
+    assert cron is not None
+    assert getattr(cron, "permission").default == "ask"
+
+
+def test_agent_loop_omits_cron_tool_when_disabled(tmp_path, monkeypatch) -> None:
+    agent_loop, _provider = make_loop(tmp_path, monkeypatch, [text_response("hello")])
+    agent_loop.config.cron.enabled = False
+
+    agent = agent_loop.agent_for(
+        InboundMessage(content="hi", channel="lark", chat_id="room", sender_id="alice")
+    )
+
+    assert agent.tools.get("cron") is None
 
 
 def test_agent_loop_session_for_uses_session_store_open_for_chat(tmp_path, monkeypatch) -> None:

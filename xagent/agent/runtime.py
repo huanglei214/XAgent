@@ -15,6 +15,7 @@ from xagent.agent.tools import build_default_tools
 from xagent.agent.tools.shell import ShellPolicy
 from xagent.bus import InboundMessage, MessageBus, OutboundEvent, StreamKind, StreamState
 from xagent.config import AppConfig
+from xagent.cron import CronService
 from xagent.providers import ModelEvent, make_provider
 from xagent.session import Session, SessionStore, resolve_session_id
 
@@ -25,6 +26,7 @@ class AgentLoop:
     workspace_path: Path
     approver: Approver | None = None
     memory_store: MemoryStore | None = None
+    cron_service: CronService | None = None
     interaction_broker: InteractionBroker = field(default_factory=InteractionBroker)
     command_router: CommandRouter = field(default_factory=CommandRouter)
     _sessions: dict[str, Session] = field(default_factory=dict)
@@ -65,6 +67,9 @@ class AgentLoop:
                 shell_policy=ShellPolicy.from_config(self.config.permissions.shell),
                 web_config=self.config.tools.web,
                 web_permission=self.config.permissions.web,
+                cron_service=self._active_cron_service(),
+                cron_permission=self.config.permissions.cron,
+                current_context=self.interaction_broker.current_context,
                 ask_user=self.interaction_broker.ask_user,
             )
             agent = Agent(
@@ -86,6 +91,17 @@ class AgentLoop:
             )
             self._agents[session.session_id] = agent
         return agent
+
+    def _active_cron_service(self) -> CronService | None:
+        if not self.config.cron.enabled:
+            return None
+        if self.cron_service is None:
+            self.cron_service = CronService(
+                tasks_path=self.config.cron_tasks_path,
+                default_timezone=self.config.cron.default_timezone,
+                poll_interval_seconds=self.config.cron.poll_interval_seconds,
+            )
+        return self.cron_service
 
     async def dispatch_once(self, bus: MessageBus) -> None:
         inbound = await bus.consume_inbound()

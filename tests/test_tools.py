@@ -69,12 +69,14 @@ def test_web_tools_can_be_disabled_in_default_registry(tmp_path) -> None:
 
 def test_tool_import_surfaces_stay_stable() -> None:
     from xagent.agent.tools import build_default_tools as exported_build_default_tools
+    from xagent.agent.tools.cron import CronTool as ExportedCronTool
     from xagent.agent.tools.registry import ToolRegistry as RegistryOnly
     from xagent.agent.tools.shell import ShellPolicy as ExportedShellPolicy
     from xagent.agent.tools.shell import ShellTool as ExportedShellTool
 
     assert exported_build_default_tools is build_default_tools
     assert RegistryOnly is ToolRegistry
+    assert ExportedCronTool.__name__ == "CronTool"
     assert ExportedShellPolicy is ShellPolicy
     assert ExportedShellTool is ShellTool
 
@@ -87,6 +89,7 @@ def test_registry_module_does_not_import_concrete_tools() -> None:
     assert "xagent.agent.tools.shell" not in source
     assert "xagent.agent.tools.web" not in source
     assert "xagent.agent.tools.interaction" not in source
+    assert "xagent.agent.tools.cron" not in source
 
 
 @pytest.mark.asyncio

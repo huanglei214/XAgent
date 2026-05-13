@@ -10,7 +10,8 @@ from xagent.agent.memory import MemoryStore
 from xagent.bus import MessageBus
 from xagent.channels import ChannelManager, build_channels
 from xagent.cli.workspace import resolve_workspace_path
-from xagent.config import ensure_config
+from xagent.config import AppConfig, ensure_config
+from xagent.cron import CronService
 
 
 def gateway_command() -> None:
@@ -34,15 +35,26 @@ def _gateway() -> int:
             "in ~/.xagent/config.yaml."
         )
         return 1
+    cron_service = _build_cron_service(config) if config.cron.enabled else None
     agent_loop = AgentLoop(
         config=config,
         workspace_path=workspace_path,
         memory_store=MemoryStore() if config.memory.enabled else None,
+        cron_service=cron_service,
     )
     manager = ChannelManager(bus=bus, channels=channels)
     typer.echo("xagent gateway started.")
     _print_channel_summary(channels)
-    return asyncio.run(_run_gateway(agent_loop=agent_loop, manager=manager, bus=bus))
+    if cron_service is not None:
+        typer.echo(f"Cron: enabled ({config.cron_tasks_path})")
+    return asyncio.run(
+        _run_gateway(
+            agent_loop=agent_loop,
+            manager=manager,
+            bus=bus,
+            cron_service=cron_service,
+        )
+    )
 
 
 def _print_channel_summary(channels: Mapping[str, object]) -> None:
@@ -58,11 +70,14 @@ async def _run_gateway(
     agent_loop: AgentLoop,
     manager: ChannelManager,
     bus: MessageBus,
+    cron_service: CronService | None = None,
 ) -> int:
     tasks = [
         asyncio.create_task(manager.run()),
         asyncio.create_task(agent_loop.run(bus)),
     ]
+    if cron_service is not None:
+        tasks.append(asyncio.create_task(cron_service.run(bus)))
     try:
         done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
         for task in done:
@@ -73,3 +88,11 @@ async def _run_gateway(
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _build_cron_service(config: AppConfig) -> CronService:
+    return CronService(
+        tasks_path=config.cron_tasks_path,
+        default_timezone=config.cron.default_timezone,
+        poll_interval_seconds=config.cron.poll_interval_seconds,
+    )

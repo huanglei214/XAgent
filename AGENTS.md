@@ -30,9 +30,10 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `xagent/cli/` 放 Typer CLI：`main.py` 只保留 root app 和 console script 入口，
   `agent.py` / `gateway.py` 分别放同名子命令逻辑，`workspace.py` 放共享 workspace 路径解析。
 - `xagent/config/` 放用户级配置读取、默认值和解析逻辑。
+- `xagent/cron/` 放 Agent 可管理的 cron 定时任务模型和 `CronService`。
 - `xagent/templates/prompts/` 放模型 prompt 模板，`xagent/templates/memory/` 放 memory 初始化模板。
 - `xagent/agent/tools/` 使用平铺模块组织：`base.py` / `registry.py` 是机制层，
-  `files.py` / `search.py` / `shell.py` / `web.py` / `interaction.py` 是具体能力，
+  `files.py` / `search.py` / `shell.py` / `web.py` / `interaction.py` / `cron.py` 是具体能力，
   `default_tools.py` 只做默认工具注册装配。
 
 ## 架构边界
@@ -58,6 +59,9 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - 会话内 slash command 在 AgentLoop 层截断，CLI、Lark 和 Weixin 都应复用同一路径。
 - `/dream` 和 `/dream --compact` 由 `xagent/agent/commands.py` 解析，具体 memory 整理由
   `xagent/agent/memory.py` 中的 `Dream` 执行。
+- Cron 定时任务通过 `CronService` 到点向 Bus 投递 `InboundMessage`，不直接调用 Agent 或 channel。
+- 每个 cron task 使用独立 `cron:<task_id>` session；回复路由仍按 task 的 `target.channel/chat_id`。
+- Cron 管理通过一个 `cron` tool 完成，不提供 CLI 管理命令。
 
 ## CLI 约定
 
@@ -146,6 +150,10 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - `web_fetch` 先走 Jina Reader；Jina 失败后用受限 direct GET 兜底，只读取 `http/https`
   的文本、JSON 和 HTML，不执行 JavaScript，也不提供通用 HTTP/API 能力。
 - 不提供低层 `http_request` 工具；第一版 web 能力只面向网页读取和搜索。
+- `cron` tool 通过 `action=list/create/update/delete` 管理 `~/.xagent/cron/tasks.json`。
+- `cron list` 默认允许；`cron create/update/delete` 使用 `permissions.cron.default`，第一版默认是 `ask`。
+- 从 Lark/Weixin 消息中创建 cron task 时，target 默认使用当前消息的 `channel/chat_id/reply_to`；
+  CLI 中创建 cron task 必须显式指定 Lark 或 Weixin target。
 
 ## 测试和质量门禁
 

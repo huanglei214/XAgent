@@ -5,6 +5,8 @@ import json
 import pytest
 
 from xagent.config import (
+    CronConfig,
+    CronPermissionConfig,
     DEFAULT_SHELL_BLACKLIST,
     LarkChannelConfig,
     WebPermissionConfig,
@@ -46,6 +48,11 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert config.permissions.shell.default == "allow"
     assert config.permissions.shell.blacklist == list(DEFAULT_SHELL_BLACKLIST)
     assert config.permissions.web.default == "allow"
+    assert config.permissions.cron.default == "ask"
+    assert config.cron.enabled is True
+    assert config.cron_tasks_path == tmp_path / "home" / "cron" / "tasks.json"
+    assert config.cron.poll_interval_seconds == 30.0
+    assert config.cron.default_timezone == "Asia/Shanghai"
     assert config.memory.enabled is True
     assert config.memory.inject_user is True
     assert config.memory.inject_soul is True
@@ -62,7 +69,9 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert "permissions:" in config_text
     assert "shell:" in config_text
     assert "web:" in config_text
+    assert "cron:" in config_text
     assert "default: allow" in config_text
+    assert "default: ask" in config_text
     assert "- rm" in config_text
     assert "command_default" not in config_text
     assert "channels:" in config_text
@@ -74,6 +83,7 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert "weixin:" in config_text
     assert "tools:" in config_text
     assert "memory:" in config_text
+    assert "tasks_path:" in config_text
     assert "inject_workspace: true" in config_text
     assert "fetch_backend: jina" in config_text
     assert "search_backend: auto" in config_text
@@ -285,6 +295,35 @@ permissions:
     assert config.permissions.web.default == "ask"
     with pytest.raises(ValueError, match="permissions.web.default"):
         WebPermissionConfig(default="maybe")
+
+
+def test_cron_permission_and_config_load_and_validate(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+permissions:
+  cron:
+    default: allow
+cron:
+  enabled: false
+  tasks_path: ~/custom/cron/tasks.json
+  poll_interval_seconds: 5
+  default_timezone: UTC
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.permissions.cron.default == "allow"
+    assert config.cron.enabled is False
+    assert config.cron.tasks_path == "~/custom/cron/tasks.json"
+    assert config.cron.poll_interval_seconds == 5
+    assert config.cron.default_timezone == "UTC"
+    with pytest.raises(ValueError, match="permissions.cron.default"):
+        CronPermissionConfig(default="maybe")
+    with pytest.raises(ValueError, match="cron.poll_interval_seconds"):
+        CronConfig(poll_interval_seconds=0)
 
 
 def test_web_tools_config_loads_explicit_values_and_ignores_root_enabled(tmp_path) -> None:

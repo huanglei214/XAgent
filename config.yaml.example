@@ -78,6 +78,9 @@ permissions:
   web:
     # web_fetch/web_search 默认策略：allow | ask | deny。
     default: "allow"
+  cron:
+    # cron create/update/delete 默认策略：allow | ask | deny。list 默认不需要确认。
+    default: "ask"
 
 trace:
   # 是否记录 provider 流式事件和 raw chunk。日常建议 false，调试 provider 时可设为 true。
@@ -127,6 +130,16 @@ memory:
   inject_soul: true
   # 是否把当前 workspace 的 memory.md 注入 system prompt。
   inject_workspace: true
+
+cron:
+  # 是否启用 cron tool 和 gateway 中的 CronService。
+  enabled: true
+  # Agent 通过 cron tool 创建的定时任务列表。
+  tasks_path: "~/.xagent/cron/tasks.json"
+  # gateway 检查到期任务的间隔秒数。
+  poll_interval_seconds: 30.0
+  # cron 表达式默认时区。
+  default_timezone: "Asia/Shanghai"
 
 channels:
   lark:

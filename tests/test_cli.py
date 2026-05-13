@@ -34,13 +34,15 @@ def test_gateway_builds_channel_manager_and_runtime(monkeypatch, tmp_path, capsy
     channels_seen = None
     agent_loop_seen = None
     manager_seen = None
+    cron_service_seen = None
     fake_channels = {"lark": object()}
 
     class FakeAgentLoop:
-        def __init__(self, *, config, workspace_path, memory_store=None) -> None:
+        def __init__(self, *, config, workspace_path, memory_store=None, cron_service=None) -> None:
             self.config = config
             self.workspace_path = workspace_path
             self.memory_store = memory_store
+            self.cron_service = cron_service
 
     class FakeManager:
         def __init__(self, *, bus, channels) -> None:
@@ -48,10 +50,11 @@ def test_gateway_builds_channel_manager_and_runtime(monkeypatch, tmp_path, capsy
             bus_seen = bus
             channels_seen = channels
 
-    async def fake_run_gateway(*, agent_loop, manager, bus) -> int:
-        nonlocal agent_loop_seen, manager_seen
+    async def fake_run_gateway(*, agent_loop, manager, bus, cron_service=None) -> int:
+        nonlocal agent_loop_seen, manager_seen, cron_service_seen
         agent_loop_seen = agent_loop
         manager_seen = manager
+        cron_service_seen = cron_service
         assert bus is bus_seen
         return 0
 
@@ -67,10 +70,46 @@ def test_gateway_builds_channel_manager_and_runtime(monkeypatch, tmp_path, capsy
     assert "xagent gateway started." in captured.out
     assert "Channels:" in captured.out
     assert "  - lark" in captured.out
+    assert "Cron: enabled" in captured.out
     assert isinstance(bus_seen, MessageBus)
     assert channels_seen is fake_channels
     assert isinstance(agent_loop_seen, FakeAgentLoop)
     assert isinstance(manager_seen, FakeManager)
+    assert cron_service_seen is not None
+
+
+def test_gateway_does_not_start_cron_when_disabled(monkeypatch, tmp_path, capsys) -> None:
+    config = default_config()
+    config.cron.enabled = False
+    config.workspace.default_path = str(tmp_path / "workspace")
+    config.workspace.sessions_path = str(tmp_path / "sessions")
+    fake_channels = {"lark": object()}
+    seen_cron_service = object()
+
+    class FakeAgentLoop:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+    class FakeManager:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+    async def fake_run_gateway(*, cron_service=None, **kwargs) -> int:
+        nonlocal seen_cron_service
+        seen_cron_service = cron_service
+        return 0
+
+    monkeypatch.setattr(cli_gateway, "ensure_config", lambda *, interactive: config)
+    monkeypatch.setattr(cli_gateway, "build_channels", lambda config, bus: fake_channels)
+    monkeypatch.setattr(cli_gateway, "AgentLoop", FakeAgentLoop)
+    monkeypatch.setattr(cli_gateway, "ChannelManager", FakeManager)
+    monkeypatch.setattr(cli_gateway, "_run_gateway", fake_run_gateway)
+
+    assert cli_main.main(["gateway"]) == 0
+
+    captured = capsys.readouterr()
+    assert "Cron: enabled" not in captured.out
+    assert seen_cron_service is None
 
 
 def test_root_without_args_shows_help(capsys) -> None:
@@ -436,3 +475,23 @@ def test_build_agent_uses_web_permission_config(tmp_path) -> None:
 
     assert web_fetch is not None
     assert getattr(web_fetch, "web_permission").default == "deny"
+
+
+def test_build_agent_registers_cron_tool_when_enabled(tmp_path) -> None:
+    config = default_config()
+    config.cron.tasks_path = str(tmp_path / "cron" / "tasks.json")
+    session = SessionStore(tmp_path / "sessions").create(workspace_path=tmp_path)
+
+    agent = build_agent(config=config, session=session)
+
+    assert agent.tools.get("cron") is not None
+
+
+def test_build_agent_omits_cron_tool_when_disabled(tmp_path) -> None:
+    config = default_config()
+    config.cron.enabled = False
+    session = SessionStore(tmp_path / "sessions").create(workspace_path=tmp_path)
+
+    agent = build_agent(config=config, session=session)
+
+    assert agent.tools.get("cron") is None

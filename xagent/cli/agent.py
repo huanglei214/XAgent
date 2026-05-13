@@ -15,6 +15,7 @@ from xagent.agent.tools.shell import ShellPolicy
 from xagent.bus import InboundMessage, MessageBus, StreamKind
 from xagent.cli.workspace import resolve_workspace_path
 from xagent.config import AppConfig, ensure_config
+from xagent.cron import CronService
 from xagent.providers import ModelEvent, make_provider
 from xagent.session import Session, SessionStore
 
@@ -39,6 +40,8 @@ def build_agent(
         shell_policy=ShellPolicy.from_config(config.permissions.shell),
         web_config=config.tools.web,
         web_permission=config.permissions.web,
+        cron_service=_build_cron_service(config) if config.cron.enabled else None,
+        cron_permission=config.permissions.cron,
     )
     return Agent(
         provider=snapshot.provider,
@@ -117,6 +120,7 @@ def _run_agent_command(
         config=config,
         workspace_path=workspace_path,
         memory_store=MemoryStore() if config.memory.enabled else None,
+        cron_service=_build_cron_service(config) if config.cron.enabled else None,
     )
     return _chat(
         agent_loop,
@@ -236,3 +240,11 @@ async def _render_outbound_loop(bus: MessageBus) -> None:
 def _print_event(event: ModelEvent) -> None:
     if event.kind == "text_delta":
         print(event.text, end="", flush=True)
+
+
+def _build_cron_service(config: AppConfig) -> CronService:
+    return CronService(
+        tasks_path=config.cron_tasks_path,
+        default_timezone=config.cron.default_timezone,
+        poll_interval_seconds=config.cron.poll_interval_seconds,
+    )

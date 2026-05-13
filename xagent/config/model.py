@@ -114,9 +114,19 @@ class WebPermissionConfig:
 
 
 @dataclass
+class CronPermissionConfig:
+    default: str = "ask"
+
+    def __post_init__(self) -> None:
+        if self.default not in {"allow", "ask", "deny"}:
+            raise ValueError("permissions.cron.default must be 'allow', 'ask', or 'deny'")
+
+
+@dataclass
 class PermissionConfig:
     shell: ShellPermissionConfig = field(default_factory=ShellPermissionConfig)
     web: WebPermissionConfig = field(default_factory=WebPermissionConfig)
+    cron: CronPermissionConfig = field(default_factory=CronPermissionConfig)
 
 
 @dataclass
@@ -181,6 +191,18 @@ class MemoryConfig:
 
 
 @dataclass
+class CronConfig:
+    enabled: bool = True
+    tasks_path: str = "~/.xagent/cron/tasks.json"
+    poll_interval_seconds: float = 30.0
+    default_timezone: str = "Asia/Shanghai"
+
+    def __post_init__(self) -> None:
+        if self.poll_interval_seconds <= 0:
+            raise ValueError("cron.poll_interval_seconds must be greater than 0")
+
+
+@dataclass
 class LarkChannelConfig:
     enabled: bool = False
     app_id: str | None = None
@@ -238,6 +260,7 @@ class AppConfig:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     limits: AgentLimitsConfig = field(default_factory=AgentLimitsConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    cron: CronConfig = field(default_factory=CronConfig)
     channels: ChannelsConfig = field(default_factory=ChannelsConfig)
 
     @property
@@ -247,6 +270,10 @@ class AppConfig:
     @property
     def sessions_path(self) -> Path:
         return _expand_path(self.workspace.sessions_path)
+
+    @property
+    def cron_tasks_path(self) -> Path:
+        return _expand_path(self.cron.tasks_path)
 
 
 def _expand_path(value: str) -> Path:
@@ -259,7 +286,8 @@ def default_config() -> AppConfig:
         workspace=WorkspaceConfig(
             default_path=str(home / "workspace" / "files"),
             sessions_path=str(home / "workspace" / "sessions"),
-        )
+        ),
+        cron=CronConfig(tasks_path=str(home / "cron" / "tasks.json")),
     )
 
 
@@ -376,6 +404,12 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
     permission_values["web"] = WebPermissionConfig(
         **_merge_known_fields(default.permissions.web, web_permission_payload)
     )
+    cron_permission_payload = permissions_payload.get("cron", {})
+    if not isinstance(cron_permission_payload, dict):
+        cron_permission_payload = {}
+    permission_values["cron"] = CronPermissionConfig(
+        **_merge_known_fields(default.permissions.cron, cron_permission_payload)
+    )
     tools_payload = payload.get("tools", {})
     if not isinstance(tools_payload, dict):
         tools_payload = {}
@@ -426,6 +460,7 @@ def _config_from_mapping(payload: dict[str, Any]) -> AppConfig:
         tools=ToolsConfig(**tools_values),
         limits=AgentLimitsConfig(**{**asdict(default.limits), **payload.get("limits", {})}),
         memory=MemoryConfig(**{**asdict(default.memory), **payload.get("memory", {})}),
+        cron=CronConfig(**{**asdict(default.cron), **payload.get("cron", {})}),
         channels=ChannelsConfig(
             lark=LarkChannelConfig(**lark_values),
             weixin=WeixinChannelConfig(**weixin_values),

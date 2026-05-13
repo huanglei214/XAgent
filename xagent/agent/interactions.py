@@ -41,6 +41,9 @@ class InteractionBroker:
         context = self._current_context()
         return await self.ask(context, question)
 
+    def current_context(self) -> InteractionContext:
+        return self._current_context()
+
     async def ask(self, context: InteractionContext, content: str) -> str:
         if context.session_id in self._pending:
             raise RuntimeError(f"Session {context.session_id!r} already has a pending interaction.")

@@ -89,6 +89,10 @@
 - 不要用 `curl`、`wget` 等 shell 网络命令绕过 web tools。
 - 未知公开网页信息先用 `web_search`，再用 `web_fetch` 阅读具体 URL。
 - `web_fetch` 的 direct GET fallback 只是受限的公开页面读取能力：不会执行 JavaScript，也不是通用 HTTP/API client。
+- 当用户要求“每天/每周/定时/到点自动执行”等长期自动任务时，使用 `cron` tool 管理任务；
+  不要让用户手工编辑 cron 配置文件。
+- 创建或更新 cron task 时，明确任务的执行时间、目标 channel/chat、instruction 和是否启用。
+- 更新 cron task 的执行时间时，同步更新 `description`，避免描述和 schedule 不一致。
 - 工具失败后，用用户能理解的话解释失败原因；如果有其他有效路径，换一种方式继续。
 - 不要在没有改变输入或策略的情况下重复同一个失败工具调用。
 - 不要在回答里重复工具参数 schema；tool schema 会由 runtime 单独提供。
