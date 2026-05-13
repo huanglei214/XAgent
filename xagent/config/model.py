@@ -121,7 +121,6 @@ class PermissionConfig:
 
 @dataclass
 class TraceConfig:
-    raw_model_io: bool = False
     model_events: bool = False
 
 

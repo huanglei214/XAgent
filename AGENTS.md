@@ -101,7 +101,9 @@ XAgent v2 是一个从零开始设计的本地通用 AI Agent。它可以读取 
 - 当前只支持 `openai_compat` backend。
 - Provider 错误直接抛出，由 Agent 记录 trace，或由 AgentLoop 转成 outbound error。
 - 不做 prompt 模拟工具调用；provider 需要原生支持 OpenAI-style tool calling。
-- system、summary、dream、empty retry prompt 来自 `xagent/templates/prompts/*.md`，通过 Jinja2 严格渲染。
+- system、runtime context、summary、dream、empty retry prompt 来自 `xagent/templates/prompts/*.md`，通过 Jinja2 严格渲染。
+- 当前日期、时间和时区不要写进稳定 system prompt；`Agent` 会把短 runtime context 作为本轮
+  ephemeral 内容附加到当前 user message，避免破坏长 system/memory 前缀的 token cache。
 - prompt 模板可以使用浅层 XML 风格标签分区；标签只作为结构约定，不做 parser 校验。
 
 ## Memory 约定

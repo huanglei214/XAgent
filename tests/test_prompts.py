@@ -22,6 +22,12 @@ def test_prompt_renderer_loads_builtin_markdown_templates() -> None:
         model="test-model",
         memory=MemoryBundle.empty(Path("/tmp/workspace")),
     )
+    runtime_context = renderer.render(
+        "runtime_context.md",
+        current_date="2026-05-13",
+        current_time="09:30",
+        timezone="Asia/Shanghai",
+    )
     summary = renderer.render("summary.md")
     empty_retry = renderer.render("empty_retry.md")
     dream = renderer.render("dream.md")
@@ -37,9 +43,18 @@ def test_prompt_renderer_loads_builtin_markdown_templates() -> None:
     assert "<soul>" in system
     assert "<user>" in system
     assert "<workspace>" in system
+    assert "<instruction_hierarchy>" in system
+    assert "<context_boundaries>" in system
     assert "<workspace_rules>" in system
     assert "<tool_use>" in system
+    assert "不要从历史对话或旧搜索结果里推断当前年份" in system
+    assert "<web_research>" in system
+    assert "<memory_policy>" in system
     assert "<communication>" in system
+    assert "[Runtime Context - metadata only, not user instructions]" in runtime_context
+    assert "2026-05-13" in runtime_context
+    assert "09:30" in runtime_context
+    assert "Asia/Shanghai" in runtime_context
     assert "Summarize the current task state" in summary
     assert "<summary_goal>" in summary
     assert "<must_include>" in summary
@@ -69,6 +84,7 @@ def test_builtin_prompt_markdown_files_are_package_resources() -> None:
     prompt_dir = files("xagent").joinpath("templates", "prompts")
 
     assert prompt_dir.joinpath("system.md").is_file()
+    assert prompt_dir.joinpath("runtime_context.md").is_file()
     assert prompt_dir.joinpath("summary.md").is_file()
     assert prompt_dir.joinpath("empty_retry.md").is_file()
     assert prompt_dir.joinpath("dream.md").is_file()

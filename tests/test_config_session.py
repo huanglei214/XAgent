@@ -42,7 +42,6 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert config.agents.defaults.model == "gpt-4o-mini"
     assert config.agents.defaults.provider == "openai_compat"
     assert config.providers.openai_compat.api_key is None
-    assert config.trace.raw_model_io is False
     assert config.trace.model_events is False
     assert config.permissions.shell.default == "allow"
     assert config.permissions.shell.blacklist == list(DEFAULT_SHELL_BLACKLIST)
@@ -78,7 +77,6 @@ def test_ensure_config_creates_user_level_layout(tmp_path, monkeypatch) -> None:
     assert "inject_workspace: true" in config_text
     assert "fetch_backend: jina" in config_text
     assert "search_backend: auto" in config_text
-    assert "raw_model_io: false" in config_text
     assert "model_events: false" in config_text
 
 

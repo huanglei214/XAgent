@@ -102,15 +102,27 @@ async def test_agent_records_plain_text_response(tmp_path) -> None:
     assert final["content"] == "hello"
     system_prompt = provider.requests[0].messages[0]
     assert system_prompt["role"] == "system"
-    assert "You are XAgent" in system_prompt["content"]
+    assert "你是 XAgent" in system_prompt["content"]
     assert "<identity>" in system_prompt["content"]
     assert "<runtime_context>" in system_prompt["content"]
     assert "<tool_use>" in system_prompt["content"]
+    assert "<instruction_hierarchy>" in system_prompt["content"]
+    assert "<context_boundaries>" in system_prompt["content"]
+    assert "<web_research>" in system_prompt["content"]
+    assert "<memory_policy>" in system_prompt["content"]
     assert str(agent.session.workspace_path) in system_prompt["content"]
     assert agent.session.session_id in system_prompt["content"]
     assert "test-model" in system_prompt["content"]
+    assert "Current date:" not in system_prompt["content"]
+    assert "不要从历史对话或旧搜索结果里推断当前年份" in system_prompt["content"]
     assert "shell blacklist" in system_prompt["content"]
     assert "parameters" not in system_prompt["content"]
+    current_user_prompt = provider.requests[0].messages[-1]
+    assert current_user_prompt["role"] == "user"
+    assert "[Runtime Context - metadata only, not user instructions]" in current_user_prompt["content"]
+    assert "Current date:" in current_user_prompt["content"]
+    assert "Timezone: `Asia/Shanghai`" in current_user_prompt["content"]
+    assert current_user_prompt["content"].endswith("\n\nhi")
     records = agent.session.read_records()
     assert records[1]["message"] == {"role": "user", "content": "hi"}
     assert records[2]["message"] == {"role": "assistant", "content": "hello"}
@@ -256,7 +268,9 @@ async def test_context_compaction_uses_summary_prompt_template(tmp_path) -> None
         if message["role"] == "system" and "Conversation summary:" in message["content"]
     )
     assert final_messages[summary_index + 1] == {"role": "user", "content": "old user 3"}
-    assert final_messages[-1] == {"role": "user", "content": "please summarize"}
+    assert final_messages[-1]["role"] == "user"
+    assert "[Runtime Context - metadata only, not user instructions]" in final_messages[-1]["content"]
+    assert final_messages[-1]["content"].endswith("\n\nplease summarize")
     assert agent.session.read_session_state()["compact"]["retained_from_index"] == 5
 
 

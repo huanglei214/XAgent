@@ -1,0 +1,167 @@
+# XAgent 配置示例
+#
+# 复制到 ~/.xagent/config.yaml 后按需修改。
+# 这里列出的是当前代码支持的全部配置字段，取值均为默认值。
+
+agents:
+  defaults:
+    # 当前只支持 openai_compat provider；这里填写实际模型名。
+    model: "gpt-4o-mini"
+    provider: "openai_compat"
+    # null 表示使用 provider/model 默认温度。
+    temperature: null
+    # null 表示不显式限制单次模型输出 token。
+    max_tokens: null
+
+providers:
+  openai_compat:
+    # OpenAI-compatible API key；本地无鉴权 endpoint 可以保持 null。
+    api_key: null
+    # OpenAI-compatible base URL；null 表示使用 SDK 默认地址。
+    api_base: null
+    # 额外 HTTP header，会透传给 OpenAI SDK。
+    extra_headers: {}
+    # 额外 request body，会透传给 OpenAI SDK。
+    extra_body: {}
+    # 模型请求超时时间，单位秒。
+    timeout_seconds: 120.0
+
+workspace:
+  # 默认 workspace 文件目录。
+  default_path: "~/.xagent/workspace/files"
+  # session 包保存目录。
+  sessions_path: "~/.xagent/workspace/sessions"
+
+permissions:
+  shell:
+    # shell 默认策略：allow | ask | deny。
+    default: "allow"
+    # shell 黑名单命中后直接拒绝，不再请求授权覆盖。
+    blacklist:
+      - "rm"
+      - "rmdir"
+      - "unlink"
+      - "shred"
+      - "dd"
+      - "mkfs"
+      - "chmod"
+      - "chown"
+      - "chgrp"
+      - "sudo"
+      - "su"
+      - "kill"
+      - "killall"
+      - "pkill"
+      - "curl"
+      - "wget"
+      - "npx"
+      - "npm install"
+      - "npm i"
+      - "pnpm add"
+      - "yarn add"
+      - "pip install"
+      - "pip3 install"
+      - "uv add"
+      - "uv pip install"
+      - "brew install"
+      - "apt install"
+      - "apt-get install"
+      - "go get"
+      - "cargo install"
+      - "gem install"
+      - ">"
+      - ">>"
+      - ">|"
+      - "&>"
+      - "2>"
+      - "2>>"
+  web:
+    # web_fetch/web_search 默认策略：allow | ask | deny。
+    default: "allow"
+
+trace:
+  # 是否记录 provider 流式事件和 raw chunk。日常建议 false，调试 provider 时可设为 true。
+  model_events: false
+
+tools:
+  web:
+    # 是否启用 web_fetch 和 web_search。
+    enabled: true
+    # 当前 web_fetch 只支持 jina。
+    fetch_backend: "jina"
+    # auto 表示有 Tavily key 时用 Tavily，否则 fallback 到 DuckDuckGo。
+    search_backend: "auto"
+    # web_fetch/web_search 默认超时时间，单位秒。
+    timeout_seconds: 30.0
+    # web_fetch 返回给模型的最大正文字符数。
+    max_fetch_chars: 20000
+    # web_search 默认最大搜索结果数。
+    max_search_results: 5
+    jina:
+      # Jina Reader API key；null 表示无 key 基础模式。
+      api_key: null
+      reader_base_url: "https://r.jina.ai"
+    tavily:
+      # Tavily API key；null 时 auto 会使用 DuckDuckGo fallback。
+      api_key: null
+    duckduckgo:
+      # 是否允许 DuckDuckGo fallback。
+      enabled: true
+
+limits:
+  # 单条用户消息最多 ReAct 轮数。
+  max_steps: 50
+  # 单条用户消息最多运行秒数。
+  max_duration_seconds: 600.0
+  # 完全相同 tool call 连续重复多少次后停止。
+  max_repeated_tool_calls: 3
+  # session 模型可见上下文超过多少字符后触发 compact。
+  context_char_threshold: 120000
+
+memory:
+  # 是否启用长期 Markdown memory。
+  enabled: true
+  # 是否把 user.md 注入 system prompt。
+  inject_user: true
+  # 是否把 soul.md 注入 system prompt。
+  inject_soul: true
+  # 是否把当前 workspace 的 memory.md 注入 system prompt。
+  inject_workspace: true
+
+channels:
+  lark:
+    # 是否启用飞书/Lark channel。
+    enabled: false
+    app_id: null
+    app_secret: null
+    verification_token: null
+    encrypt_key: null
+    # feishu | lark。
+    domain: "feishu"
+    # 群聊是否只响应 @ 机器人消息。
+    require_mention: true
+    # 是否从入站文本中去掉 @ 机器人文本。
+    strip_mention: true
+    # 是否使用 SDK 自动重连。
+    auto_reconnect: true
+    log_level: "info"
+    # 是否对用户原消息添加 OnIt/DONE reaction。
+    reactions_enabled: true
+    working_reaction: "OnIt"
+    done_reaction: "DONE"
+    # auto | text | markdown_card。
+    message_format: "auto"
+
+  weixin:
+    # 是否启用实验性个人微信 channel。
+    enabled: false
+    # 允许的发送者列表；[] 默认拒绝所有人，["*"] 表示允许所有人。
+    allow_from: []
+    base_url: "https://ilinkai.weixin.qq.com"
+    route_tag: null
+    # 可直接配置 token；更推荐通过 xagent channels login weixin 保存登录态。
+    token: null
+    # null 表示使用 ~/.xagent/channels/weixin。
+    state_dir: null
+    # long-poll 默认等待时间，单位秒。
+    poll_timeout_seconds: 35

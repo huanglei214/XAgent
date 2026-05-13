@@ -15,7 +15,7 @@ from xagent.agent.runner import (
 )
 from xagent.agent.tools.registry import ToolRegistry
 from xagent.providers.types import ModelRequest, Provider
-from xagent.session import Session
+from xagent.session import Session, local_now
 
 RETAINED_USER_TURNS = 4
 
@@ -70,10 +70,30 @@ class Agent:
         )
 
     def _build_messages(self) -> list[dict[str, Any]]:
+        model_messages = self._attach_runtime_context(self.session.read_model_messages())
         return [
             {"role": "system", "content": self._render_system_prompt()},
-            *self.session.read_model_messages(),
+            *model_messages,
         ]
+
+    def _attach_runtime_context(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """把本轮运行时元信息附加到当前 user message，不写入 session 历史。"""
+
+        runtime_context = self._render_runtime_context()
+        if not messages or messages[-1].get("role") != "user":
+            return [*messages, {"role": "user", "content": runtime_context}]
+
+        updated = [*messages]
+        current = dict(updated[-1])
+        content = current.get("content")
+        if isinstance(content, list):
+            current["content"] = [{"type": "text", "text": runtime_context}, *content]
+        elif isinstance(content, str):
+            current["content"] = f"{runtime_context}\n\n{content}" if content else runtime_context
+        else:
+            current["content"] = runtime_context if content is None else f"{runtime_context}\n\n{content}"
+        updated[-1] = current
+        return updated
 
     async def compact(
         self,
@@ -169,6 +189,16 @@ class Agent:
             session_id=self.session.session_id,
             model=self.model,
             memory=memory,
+        )
+
+    def _render_runtime_context(self) -> str:
+        current_datetime = local_now()
+        current_date, _, current_time = current_datetime.partition("T")
+        return self.prompt_renderer.render(
+            "runtime_context.md",
+            current_date=current_date,
+            current_time=current_time[:5],
+            timezone="Asia/Shanghai",
         )
 
     def _load_memory_bundle(self) -> MemoryBundle:

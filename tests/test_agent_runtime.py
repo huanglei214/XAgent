@@ -103,7 +103,8 @@ async def test_agent_loop_dispatches_inbound_to_outbound(tmp_path, monkeypatch) 
     assert final.reply_to == "alice"
     assert final.session_id == "test:room"
     assert final.metadata["external_message_id"] == "msg_1"
-    assert provider.requests[0].messages[-1]["content"] == "[sender:alice] hi"
+    assert "[Runtime Context - metadata only, not user instructions]" in provider.requests[0].messages[-1]["content"]
+    assert provider.requests[0].messages[-1]["content"].endswith("\n\n[sender:alice] hi")
 
 
 @pytest.mark.asyncio
@@ -179,8 +180,8 @@ async def test_agent_loop_reuses_session_for_same_channel_chat_id(tmp_path, monk
     assert first_final.session_id == "test:room"
     assert second_final.session_id == "test:room"
     assert len(list((tmp_path / "sessions").iterdir())) == 1
-    assert provider.requests[0].messages[-1]["content"] == "[sender:alice] first"
-    assert provider.requests[1].messages[-1]["content"] == "[sender:bob] second"
+    assert provider.requests[0].messages[-1]["content"].endswith("\n\n[sender:alice] first")
+    assert provider.requests[1].messages[-1]["content"].endswith("\n\n[sender:bob] second")
 
 
 @pytest.mark.asyncio
